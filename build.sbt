@@ -8,6 +8,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-stream" % akkaV,
   "com.typesafe.akka" %% "akka-http" % akkaHttpV,
   "io.spray" %% "spray-json" % "1.3.4",
+  "com.drewnoakes" % "metadata-extractor" % "2.11.0",
   "org.specs2" %% "specs2-core" % specs2V % "test",
 )
 

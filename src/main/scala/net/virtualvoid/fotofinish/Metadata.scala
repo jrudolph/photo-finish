@@ -5,13 +5,17 @@ import java.io.FileOutputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
-import scala.collection.immutable
 import akka.http.scaladsl.model.DateTime
-import javax.imageio.ImageIO
-import javax.imageio.stream.FileImageInputStream
+import com.drew.imaging.ImageMetadataReader
+import com.drew.metadata.Directory
+import com.drew.metadata.exif.ExifDirectoryBase
+import com.drew.metadata.exif.ExifIFD0Directory
+import com.drew.metadata.exif.ExifSubIFDDirectory
 import spray.json._
 
+import scala.collection.immutable
 import scala.io.Source
+import scala.util.Try
 
 final case class MetadataHeader(
     created: DateTime,
@@ -53,24 +57,26 @@ trait MetadataExtractor { thisExtractor =>
   def version: Int
 
   // TODO: support streaming metadata extraction?
-  def extractMetadata(file: FileInfo): MetadataEntry[EntryT] =
-    MetadataEntry(
-      MetadataHeader(
-        DateTime.now,
-        version,
-        file.hash,
-        kind
-      ),
-      this,
-      extract(file)
-    )
+  def extractMetadata(file: FileInfo): Option[MetadataEntry[EntryT]] =
+    Try {
+      MetadataEntry[EntryT](
+        MetadataHeader(
+          DateTime.now,
+          version,
+          file.hash,
+          kind
+        ),
+        this,
+        extract(file)
+      )
+    }.toOption
 
   protected def extract(file: FileInfo): EntryT
 
   implicit def metadataFormat: JsonFormat[EntryT]
 
-  import MetadataJsonProtocol._
   import JsonExtra._
+  import MetadataJsonProtocol._
   private implicit def entryFormat = new JsonFormat[MetadataEntry[EntryT]] {
     override def read(json: JsValue): MetadataEntry[EntryT] = {
       val header = json.convertTo[MetadataHeader]
@@ -90,7 +96,8 @@ trait MetadataExtractor { thisExtractor =>
 
 object MetadataStore {
   val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
-    SimpleImageDataExtractor
+    ExifBaseDataExtractor,
+    IngestionDataExtractor
   )
 
   def store[T](metadata: MetadataEntry[T], repoConfig: RepositoryConfig): Unit = {
@@ -110,15 +117,20 @@ object MetadataStore {
   def load(target: FileInfo): immutable.Seq[MetadataEntry[_]] = {
     if (!target.metadataFile.exists()) Nil
     else
-      Source.fromInputStream(new GZIPInputStream(new FileInputStream(target.metadataFile))).getLines().flatMap(readMetadataEntry).toVector
+      Source.fromInputStream(new GZIPInputStream(new FileInputStream(target.metadataFile))).getLines()
+        .flatMap(readMetadataEntry).toVector
   }
 
-  def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = {
+  def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = Try {
     import MetadataJsonProtocol._
     val jsonValue = entry.parseJson
     val header = jsonValue.convertTo[MetadataHeader]
     findExtractor(header).map(_.get(jsonValue))
-  }
+  }.recover {
+    case e =>
+      println(s"Couldn't read metadata entry [$entry] because of [${e.getMessage}]")
+      None
+  }.get
 
   /**
    * Reruns all known extractors when metadata is missing.
@@ -129,8 +141,8 @@ object MetadataStore {
       if (!infos.exists(_.extractor == ex)) {
         println(s"Metadata [${ex.kind}] missing for [${target.repoFile}], rerunning analysis...")
         val result = ex.extractMetadata(target)
-        store(result, repoConfig)
-        result :: Nil
+        if (result.isDefined) store(result.get, repoConfig)
+        result.toSeq
       } else immutable.Seq.empty[MetadataEntry[_]]
     }
   }
@@ -150,27 +162,62 @@ object JsonExtra {
   }
 }
 
-final case class SimpleImageData(
-    width:  Int,
-    height: Int
+final case class IngestionData(
+    originalFileName: String,
+    originalFilePath: String,
+    fileSize:         Long
 )
-object SimpleImageDataExtractor extends MetadataExtractor {
-  override type EntryT = SimpleImageData
+object IngestionDataExtractor extends MetadataExtractor {
+  type EntryT = IngestionData
+  override def kind: String = "ingestion-data"
+  override def version: Int = 1
 
-  override def kind: String = "simple-image-data"
+  override protected def extract(file: FileInfo): IngestionData =
+    IngestionData(
+      file.originalFileName.getName,
+      file.originalFileName.getParent,
+      file.originalFileName.length()
+    )
+  import DefaultJsonProtocol._
+  override implicit def metadataFormat: JsonFormat[IngestionData] = jsonFormat3(IngestionData)
+}
+
+final case class ExifBaseData(
+    width:       Option[Int],
+    height:      Option[Int],
+    dateTaken:   Option[DateTime],
+    cameraModel: Option[String]
+)
+object ExifBaseDataExtractor extends MetadataExtractor {
+  override type EntryT = ExifBaseData
+
+  override def kind: String = "exif-base-data"
   override def version: Int = 1
 
   import DefaultJsonProtocol._
-  override implicit def metadataFormat: JsonFormat[SimpleImageData] = jsonFormat2(SimpleImageData)
+  import MetadataJsonProtocol.dateTimeFormat
+  override implicit def metadataFormat: JsonFormat[ExifBaseData] = jsonFormat4(ExifBaseData)
 
-  override protected def extract(file: FileInfo): SimpleImageData = {
-    import scala.collection.JavaConverters._
-    val reader = ImageIO.getImageReadersByFormatName("jpeg").asScala.next()
-    reader.setInput(new FileImageInputStream(file.repoFile))
-    val num = reader.getNumImages(true)
-    println(s"Found $num images")
-    val width = reader.getWidth(0)
-    val height = reader.getHeight(0)
-    SimpleImageData(width, height)
+  override protected def extract(file: FileInfo): ExifBaseData = {
+    val metadata = ImageMetadataReader.readMetadata(file.repoFile)
+    val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
+    val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
+    val dirs = dir0.toSeq ++ dir1.toSeq
+
+    def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
+      tag =>
+        dirs.collectFirst {
+          case dir if dir.containsTag(tag) => Option(tped(dir, tag))
+        }.flatten
+    def dateEntry = entry((dir, tag) => DateTime(dir.getDate(tag).getTime))
+    def intEntry = entry(_.getInt(_))
+    def stringEntry = entry(_.getString(_))
+
+    val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH)
+    val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT)
+    val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
+    val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
+
+    ExifBaseData(width, height, date, model)
   }
 }

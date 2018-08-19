@@ -57,9 +57,10 @@ object Hash {
 }
 
 case class FileInfo(
-    hash:         Hash,
-    repoFile:     File,
-    metadataFile: File)
+    hash:             Hash,
+    repoFile:         File,
+    metadataFile:     File,
+    originalFileName: File)
 
 case class RepositoryConfig(
     storageDir:    File,
@@ -105,7 +106,7 @@ class Scanner(config: RepositoryConfig) {
     } else
       println(s"Found existing file for [$file] at [$inRepo]")
 
-    FileInfo(hash, inRepo, metadataFile(hash))
+    FileInfo(hash, inRepo, metadataFile(hash), file)
   }
 }
 
