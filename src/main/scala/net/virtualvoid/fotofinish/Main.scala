@@ -16,8 +16,9 @@ object Main extends App {
   val dir = new File("/home/johannes/Fotos/tmp/data")
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 
-  val scannerConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
-  new Scanner(scannerConfig).scan(dir)
+  val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
+  val infos = new Scanner(repoConfig).scan(dir)
+  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))
 }
 
 sealed trait HashAlgorithm {
@@ -32,6 +33,8 @@ object HashAlgorithm {
   def byName(name: String): Option[HashAlgorithm] = Algorithms.find(_.name == name)
 
   private class Impl(val algorithm: String) extends HashAlgorithm {
+    require(!name.contains(":"))
+
     override def name: String = algorithm.toLowerCase
 
     override def createDigest(): MessageDigest =
@@ -41,14 +44,14 @@ object HashAlgorithm {
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
   lazy val asHexString: String = data.map(_ formatted "%02x").mkString
 
-  override def toString: String = s"${hashAlgorithm.name}-$asHexString"
+  override def toString: String = s"${hashAlgorithm.name}:$asHexString"
 }
 object Hash {
   def fromPrefixedString(prefixed: String): Option[Hash] = Try {
-    val Array(name, value) = prefixed.split('-')
+    val Array(name, value) = prefixed.split(':')
     // TODO: fix error conditions
     val alg = HashAlgorithm.byName(name).get
-    val data = ByteString(value.grouped(2).map(s => java.lang.Byte.parseByte(s, 16)).toVector: _*)
+    val data = ByteString(value.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
     Hash(alg, data)
   }.toOption
 }
