@@ -15,6 +15,7 @@ import spray.json._
 
 import scala.collection.immutable
 import scala.io.Source
+import scala.reflect.ClassTag
 import scala.util.Try
 
 final case class MetadataHeader(
@@ -94,6 +95,14 @@ trait MetadataExtractor { thisExtractor =>
     entry.toJson
 }
 
+final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
+  def getEntry[T: ClassTag]: Option[MetadataEntry[T]] =
+    entries.collectFirst {
+      case e @ MetadataEntry(_, _, data: T) => e.asInstanceOf[MetadataEntry[T]]
+    }
+  def get[T: ClassTag]: Option[T] = getEntry[T].map(_.data)
+}
+
 object MetadataStore {
   val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
     ExifBaseDataExtractor,
@@ -114,7 +123,7 @@ object MetadataStore {
     } finally out.close()
   }
 
-  def load(target: FileInfo): immutable.Seq[MetadataEntry[_]] = {
+  def load(target: FileInfo): Metadata = Metadata {
     if (!target.metadataFile.exists()) Nil
     else
       Source.fromInputStream(new GZIPInputStream(new FileInputStream(target.metadataFile))).getLines()
@@ -136,7 +145,7 @@ object MetadataStore {
    * Reruns all known extractors when metadata is missing.
    */
   def updateMetadata(target: FileInfo, repoConfig: RepositoryConfig): immutable.Seq[MetadataEntry[_]] = {
-    val infos = load(target)
+    val infos = load(target).entries
     RegisteredMetadataExtractors.flatMap { ex =>
       if (!infos.exists(_.extractor == ex)) {
         println(s"Metadata [${ex.kind}] missing for [${target.repoFile}], rerunning analysis...")

@@ -17,8 +17,11 @@ object Main extends App {
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 
   val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
-  val infos = new Scanner(repoConfig).scan(dir)
-  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))
+  /*val infos = new Scanner(repoConfig).scan(dir)
+  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))*/
+
+  val manager = new RepositoryManager(repoConfig)
+  Relinker.createLinkedDirByYearMonth(manager)
 }
 
 sealed trait HashAlgorithm {
@@ -51,9 +54,13 @@ object Hash {
     val Array(name, value) = prefixed.split(':')
     // TODO: fix error conditions
     val alg = HashAlgorithm.byName(name).get
-    val data = ByteString(value.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
-    Hash(alg, data)
+    fromString(alg, value)
   }.toOption
+  def fromString(hashAlgorithm: HashAlgorithm, string: String): Hash = {
+    // TODO: check length
+    val data = ByteString(string.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
+    Hash(hashAlgorithm, data)
+  }
 }
 
 case class FileInfo(
@@ -66,6 +73,8 @@ case class RepositoryConfig(
     storageDir:    File,
     hashAlgorithm: HashAlgorithm
 ) {
+  def primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
+
   def repoFile(hash: Hash): File = {
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}"
     new File(storageDir, fileName)
@@ -74,6 +83,14 @@ case class RepositoryConfig(
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}.metadata.json.gz"
     new File(storageDir, fileName)
   }
+
+  def fileInfoOf(hash: Hash): FileInfo =
+    FileInfo(
+      hash,
+      repoFile(hash),
+      metadataFile(hash),
+      repoFile(hash)
+    )
 }
 
 class Scanner(config: RepositoryConfig) {
@@ -157,5 +174,19 @@ object Hasher {
 
     val hashData = try hashStep() finally fis.close()
     Hash(hashAlgorithm, hashData)
+  }
+}
+
+final case class FileAndMetadata(fileInfo: FileInfo, metadata: Metadata)
+class RepositoryManager(val config: RepositoryConfig) {
+  val FileNamePattern = """^[0-9a-f]{128}$""".r
+  def allFiles: Iterable[FileAndMetadata] = {
+    import Scanner._
+    Scanner.allFilesMatching(config.storageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
+      .map(f => Hash.fromString(config.hashAlgorithm, f.getName))
+      .map(config.fileInfoOf)
+      .map { fileInfo =>
+        FileAndMetadata(fileInfo, MetadataStore.load(fileInfo))
+      }
   }
 }
