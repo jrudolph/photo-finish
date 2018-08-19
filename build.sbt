@@ -1,11 +1,23 @@
 val scalaV = "2.12.6"
+val akkaV = "2.5.14"
+val akkaHttpV = "10.1.4"
+
 val specs2V = "4.3.2"
 
 libraryDependencies ++= Seq(
-  "org.specs2" %% "specs2-core" % specs2V % "test"
+  "com.typesafe.akka" %% "akka-stream" % akkaV,
+  "com.typesafe.akka" %% "akka-http" % akkaHttpV,
+  "io.spray" %% "spray-json" % "1.3.4",
+  "org.specs2" %% "specs2-core" % specs2V % "test",
 )
 
 scalaVersion := scalaV
+
+scalacOptions ++= Seq(
+  "-deprecation",
+  "-feature",
+  "-Xlint"
+)
 
 // docs
 
