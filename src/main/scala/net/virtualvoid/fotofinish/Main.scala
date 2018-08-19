@@ -103,8 +103,7 @@ class Scanner(config: RepositoryConfig) {
         Files.createLink(inRepo.toPath, file.toPath)
       else
         Files.copy(file.toPath, inRepo.toPath)
-    } else
-      println(s"Found existing file for [$file] at [$inRepo]")
+    }
 
     FileInfo(hash, inRepo, metadataFile(hash), file)
   }
