@@ -121,6 +121,8 @@ class Scanner(config: RepositoryConfig) {
         Files.createLink(inRepo.toPath, file.toPath)
       else
         Files.copy(file.toPath, inRepo.toPath)
+
+      inRepo.setWritable(false)
     }
 
     FileInfo(hash, inRepo, metadataFile(hash), file)
