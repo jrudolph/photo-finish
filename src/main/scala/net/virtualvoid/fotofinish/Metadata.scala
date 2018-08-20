@@ -2,6 +2,8 @@ package net.virtualvoid.fotofinish
 
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -97,7 +99,7 @@ trait MetadataExtractor { thisExtractor =>
 
 final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
   def getEntry[T: ClassTag]: Option[MetadataEntry[T]] =
-    entries.collectFirst {
+    entries.reverse.collectFirst {
       case e @ MetadataEntry(_, _, data: T) => e.asInstanceOf[MetadataEntry[T]]
     }
   def get[T: ClassTag]: Option[T] = getEntry[T].map(_.data)
@@ -172,23 +174,30 @@ object JsonExtra {
 }
 
 final case class IngestionData(
-    originalFileName: String,
-    originalFilePath: String,
-    fileSize:         Long
+    fileSize:                 Long,
+    originalFileName:         String,
+    originalFilePath:         String,
+    originalFileCreationDate: DateTime,
+    originalFileModifiedDate: DateTime,
+    repoFileModifiedDate:     DateTime
 )
 object IngestionDataExtractor extends MetadataExtractor {
   type EntryT = IngestionData
   override def kind: String = "ingestion-data"
-  override def version: Int = 1
+  override def version: Int = 2
 
   override protected def extract(file: FileInfo): IngestionData =
     IngestionData(
-      file.originalFileName.getName,
-      file.originalFileName.getParent,
-      file.originalFileName.length()
+      file.originalFile.length(),
+      file.originalFile.getName,
+      file.originalFile.getParent,
+      DateTime(Files.readAttributes(file.originalFile.toPath, classOf[BasicFileAttributes]).creationTime().toMillis),
+      DateTime(file.originalFile.lastModified()),
+      DateTime(file.repoFile.lastModified())
     )
   import DefaultJsonProtocol._
-  override implicit def metadataFormat: JsonFormat[IngestionData] = jsonFormat3(IngestionData)
+  import MetadataJsonProtocol.dateTimeFormat
+  override implicit def metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 }
 
 final case class ExifBaseData(

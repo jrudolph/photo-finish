@@ -64,10 +64,11 @@ object Hash {
 }
 
 case class FileInfo(
-    hash:             Hash,
-    repoFile:         File,
-    metadataFile:     File,
-    originalFileName: File)
+    hash:         Hash,
+    repoFile:     File,
+    metadataFile: File,
+    originalFile: File
+)
 
 case class RepositoryConfig(
     storageDir:    File,
