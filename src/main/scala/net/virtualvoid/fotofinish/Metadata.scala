@@ -1,18 +1,23 @@
 package net.virtualvoid.fotofinish
 
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.Base64
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
 import akka.http.scaladsl.model.DateTime
+import akka.util.ByteString
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.Directory
 import com.drew.metadata.exif.ExifDirectoryBase
 import com.drew.metadata.exif.ExifIFD0Directory
 import com.drew.metadata.exif.ExifSubIFDDirectory
+import javax.imageio.ImageIO
 import spray.json._
 
 import scala.collection.immutable
@@ -43,6 +48,15 @@ object MetadataJsonProtocol {
       case JsString(data) => DateTime.fromIsoDateTimeString(data).getOrElse(error(s"Date could not be read [$data]"))
     }
     override def write(obj: DateTime): JsValue = JsString(obj.toIsoDateTimeString())
+  }
+  implicit val byteStringFormat = new JsonFormat[ByteString] {
+    override def read(json: JsValue): ByteString = json match {
+      case JsString(data) => ByteString.fromArray(Base64.getDecoder.decode(data))
+    }
+    override def write(obj: ByteString): JsValue = {
+      val data = Base64.getEncoder.encodeToString(obj.toArray)
+      JsString(data)
+    }
   }
 
   implicit val hashFormat = new JsonFormat[Hash] {
@@ -108,7 +122,8 @@ final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
 object MetadataStore {
   val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
     ExifBaseDataExtractor,
-    IngestionDataExtractor
+    IngestionDataExtractor,
+    ThumbnailExtractor
   )
 
   def store[T](metadata: MetadataEntry[T], repoConfig: RepositoryConfig): Unit = {
@@ -238,4 +253,32 @@ object ExifBaseDataExtractor extends MetadataExtractor {
 
     ExifBaseData(width, height, date, model)
   }
+}
+
+final case class Thumbnail(
+    width:  Int,
+    height: Int,
+    data:   ByteString
+)
+object ThumbnailExtractor extends MetadataExtractor {
+  type EntryT = Thumbnail
+
+  override def kind: String = "thumbnail"
+  override def version: Int = 2
+
+  override protected def extract(file: FileInfo): Thumbnail = {
+    import sys.process._
+    val baos = new ByteArrayOutputStream
+    val res = s"""convert ${file.repoFile.getCanonicalPath} -thumbnail 150 -quality 20 -auto-orient -""".#>(baos).!
+    require(res == 0)
+    val imageBytes = ByteString.fromArray(baos.toByteArray)
+    // TODO: optimize memory usage
+    val image = ImageIO.read(new ByteArrayInputStream(baos.toByteArray))
+
+    Thumbnail(image.getWidth, image.getHeight, imageBytes)
+  }
+
+  import DefaultJsonProtocol._
+  import MetadataJsonProtocol.byteStringFormat
+  override implicit def metadataFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail)
 }
