@@ -35,7 +35,29 @@ object Relinker {
         }
 
         val dir = dateDir(date)
-        Files.createSymbolicLink(new File(dir, fileName).toPath, f.fileInfo.repoFile.toPath)
+        val repoPath = f.fileInfo.repoFile.toPath
+
+        def linkTarget(i: Int): Unit = {
+          val targetPath = new File(dir, s"${i}_$fileName").toPath
+
+          if (Files.exists(targetPath))
+            if (targetPath.toRealPath() == repoPath.toRealPath())
+              () // link already there
+            else
+              linkTarget(i + 1)
+          else
+            Files.createSymbolicLink(targetPath, repoPath)
+        }
+
+        val targetPath = new File(dir, fileName).toPath
+
+        if (Files.exists(targetPath))
+          if (targetPath.toRealPath() == repoPath.toRealPath())
+            () // link already there
+          else
+            linkTarget(0)
+        else
+          Files.createSymbolicLink(targetPath, repoPath)
       }
   }
 
