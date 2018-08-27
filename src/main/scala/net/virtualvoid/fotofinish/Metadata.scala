@@ -74,6 +74,7 @@ trait MetadataExtractor { thisExtractor =>
   type EntryT
   def kind: String
   def version: Int
+  implicit def classTag: ClassTag[EntryT]
 
   /** Override to check allow new entries created for the same version */
   def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[EntryT]]): Boolean = true
@@ -117,11 +118,18 @@ trait MetadataExtractor { thisExtractor =>
 }
 
 final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
-  def getEntry[T: ClassTag]: Option[MetadataEntry[T]] =
+  def getEntry[E: ClassTag]: Option[MetadataEntry[E]] =
     entries.reverse.collectFirst {
-      case e @ MetadataEntry(_, _, data: T) => e.asInstanceOf[MetadataEntry[T]]
+      case e @ MetadataEntry(_, _, data: E) => e.asInstanceOf[MetadataEntry[E]]
     }
+  def getEntries[E: ClassTag]: immutable.Seq[MetadataEntry[E]] =
+    entries.collect {
+      case e @ MetadataEntry(_, _, data: E) => e.asInstanceOf[MetadataEntry[E]]
+    }
+
   def get[T: ClassTag]: Option[T] = getEntry[T].map(_.data)
+
+  def get[T](shortcut: MetadataShortcuts.ShortCut[T]): T = shortcut(this)
 }
 
 object MetadataStore {
@@ -210,11 +218,14 @@ final case class IngestionData(
     originalFileCreationDate: DateTime,
     originalFileModifiedDate: DateTime,
     repoFileModifiedDate:     DateTime
-)
+) {
+  def originalFullFilePath: String = originalFilePath + "/" + originalFileName
+}
 object IngestionDataExtractor extends MetadataExtractor {
   type EntryT = IngestionData
   override def kind: String = "ingestion-data"
   override def version: Int = 2
+  override def classTag: ClassTag[IngestionData] = implicitly[ClassTag[IngestionData]]
 
   override protected def extract(file: FileInfo): IngestionData =
     IngestionData(
@@ -244,6 +255,8 @@ object ExifBaseDataExtractor extends MetadataExtractor {
 
   override def kind: String = "exif-base-data"
   override def version: Int = 1
+
+  override def classTag: ClassTag[ExifBaseData] = implicitly[ClassTag[ExifBaseData]]
 
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.dateTimeFormat
@@ -284,6 +297,8 @@ object ThumbnailExtractor extends MetadataExtractor {
   override def kind: String = "thumbnail"
   override def version: Int = 2
 
+  override def classTag: ClassTag[Thumbnail] = implicitly[ClassTag[Thumbnail]]
+
   override protected def extract(file: FileInfo): Thumbnail = {
     import sys.process._
     val baos = new ByteArrayOutputStream
@@ -299,4 +314,16 @@ object ThumbnailExtractor extends MetadataExtractor {
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.byteStringFormat
   override implicit def metadataFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail)
+}
+
+object MetadataShortcuts {
+  type ShortCut[T] = Metadata => T
+
+  def optional[E: ClassTag, T](f: E => Option[T]): ShortCut[Option[T]] = _.getEntry[E].flatMap(e => f(e.data))
+  def manyFromSingle[E: ClassTag, T](f: E => T): ShortCut[immutable.Seq[T]] = _.getEntries[E].map(e => f(e.data))
+
+  val DateTaken = optional[ExifBaseData, DateTime](_.dateTaken)
+  val CameraModel = optional[ExifBaseData, String](_.cameraModel)
+  val OriginalFileNames = manyFromSingle[IngestionData, String](_.originalFileName)
+  val OriginalFullFilePaths = manyFromSingle[IngestionData, String](x => x.originalFullFilePath)
 }
