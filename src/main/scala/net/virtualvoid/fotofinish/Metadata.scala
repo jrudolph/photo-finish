@@ -23,6 +23,8 @@ import spray.json._
 import scala.collection.immutable
 import scala.io.Source
 import scala.reflect.ClassTag
+import scala.util.Failure
+import scala.util.Success
 import scala.util.Try
 
 final case class MetadataHeader(
@@ -172,6 +174,14 @@ object MetadataStore {
       }
       if (exInfos.isEmpty || !ex.isCurrent(target, exInfos)) {
         println(s"Metadata [${ex.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
+        val result: Option[MetadataEntry[ex.EntryT]] =
+          Try(ex.extractMetadata(target)) match {
+            case Success(m) =>
+              m
+            case Failure(exception) =>
+              println(s"Metadata extraction [${ex.kind} failed for [${target.repoFile}] with ${exception.getMessage}")
+              None
+          }
         if (result.isDefined) store(result.get, repoConfig)
         result.toSeq
       } else immutable.Seq.empty[MetadataEntry[_]]
