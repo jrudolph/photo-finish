@@ -15,7 +15,7 @@ import scala.collection.immutable
 import scala.util.Try
 
 object Settings {
-  val dir = new File("/home/johannes/Fotos/tmp/repo/ingest")
+  val dir = new File("/home/johannes/Fotos/2018")
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 
   val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
@@ -24,10 +24,17 @@ object Settings {
 object Main extends App {
   import Settings._
 
+  println("Ingesting new files")
   val infos = new Scanner(repoConfig, manager).scan(dir)
+
+  println("Updating metadata")
   infos.foreach(MetadataStore.updateMetadata(_, repoConfig))
 
-  Relinker.createLinkedDirByYearMonth(manager)
+  println("Updating by-date folder")
+  Relinker.createDirStructure(manager)(Relinker.byYearMonth(manager))
+
+  println("Updating by-original-name folder")
+  Relinker.createDirStructure(manager)(Relinker.byOriginalFileName(manager))
 }
 
 sealed trait HashAlgorithm {
@@ -135,7 +142,11 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
           Files.copy(file.toPath, inRepo.toPath)
 
         inRepo.setWritable(false)
-      } else println(s"Already in repo [$file] (as determined by hash)")
+      } else {
+        println(s"Already in repo [$file] (as determined by hash)")
+        // TODO: create hard-link instead?
+      }
+
       FileInfo(hash, inRepo, metadataFile(hash), file)
     }
   }
