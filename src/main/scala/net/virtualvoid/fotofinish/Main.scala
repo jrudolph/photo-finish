@@ -4,6 +4,8 @@ import java.io.File
 import java.io.FileFilter
 import java.io.FileInputStream
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFileAttributes
 import java.security.MessageDigest
 
 import akka.util.ByteString
@@ -12,15 +14,19 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.util.Try
 
-object Main extends App {
-  val dir = new File("/home/johannes/Fotos/tmp/data")
+object Settings {
+  val dir = new File("/home/johannes/Fotos/tmp/repo/ingest")
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 
   val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
-  /*val infos = new Scanner(repoConfig).scan(dir)
-  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))*/
-
   val manager = new RepositoryManager(repoConfig)
+}
+object Main extends App {
+  import Settings._
+
+  val infos = new Scanner(repoConfig, manager).scan(dir)
+  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))
+
   Relinker.createLinkedDirByYearMonth(manager)
 }
 
@@ -94,7 +100,7 @@ case class RepositoryConfig(
     )
 }
 
-class Scanner(config: RepositoryConfig) {
+class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
   import Scanner._
   import config._
 
@@ -112,20 +118,26 @@ class Scanner(config: RepositoryConfig) {
   }
 
   def ensureInRepo(file: File): FileInfo = {
-    val hash = Hasher.hash(hashAlgorithm, file)
-    val inRepo = repoFile(hash)
-    if (!inRepo.exists()) {
-      println(s"Creating repo file for [$file] at [$inRepo] exists: ${inRepo.exists()}")
-      Files.createDirectories(inRepo.getParentFile.toPath)
-      if (file.toPath.getFileSystem == inRepo.toPath.getFileSystem)
-        Files.createLink(inRepo.toPath, file.toPath)
-      else
-        Files.copy(file.toPath, inRepo.toPath)
+    val ufi = unixFileInfo(file.toPath)
+    val byInode = manager.inodeMap.get((ufi.dev, ufi.inode))
+    if (byInode.isDefined) {
+      println(s"Found hard link into repo for [$file] at [${byInode.get}]")
+      byInode.get.copy(originalFile = file)
+    } else {
+      val hash = Hasher.hash(hashAlgorithm, file)
+      val inRepo = repoFile(hash)
+      if (!inRepo.exists()) {
+        println(s"Creating repo file for [$file] at [$inRepo] exists: ${inRepo.exists()}")
+        Files.createDirectories(inRepo.getParentFile.toPath)
+        if (file.toPath.getFileSystem == inRepo.toPath.getFileSystem)
+          Files.createLink(inRepo.toPath, file.toPath)
+        else
+          Files.copy(file.toPath, inRepo.toPath)
 
-      inRepo.setWritable(false)
+        inRepo.setWritable(false)
+      } else println(s"Already in repo [$file] (as determined by hash)")
+      FileInfo(hash, inRepo, metadataFile(hash), file)
     }
-
-    FileInfo(hash, inRepo, metadataFile(hash), file)
   }
 }
 
@@ -134,15 +146,31 @@ object Scanner {
 
   def allFilesMatching(dir: File, fileFilter: FileFilter): Iterable[File] = {
     def iterate(dir: File): Iterator[File] = {
-      val subDirs = dir.listFiles(isDirectory && isNoDotDir)
+      val subDirs = Option(dir.listFiles(isDirectory && isNoDotDir)).getOrElse(Array.empty)
 
-      dir.listFiles(fileFilter).toIterator ++
+      Option(dir.listFiles(fileFilter)).getOrElse(Array.empty).toIterator ++
         subDirs.toIterator.flatMap(dir => iterate(dir))
     }
 
     new Iterable[File] {
       override def iterator: Iterator[File] = iterate(dir)
     }
+  }
+
+  case class UnixFileInfo(dev: Long, inode: Long)
+
+  private val (inoF, devF) = {
+    val clazz = Class.forName("sun.nio.fs.UnixFileAttributes")
+    val inoF = clazz.getDeclaredMethod("ino")
+    inoF.setAccessible(true)
+    val devF = clazz.getDeclaredMethod("dev")
+    devF.setAccessible(true)
+    (inoF, devF)
+  }
+  def unixFileInfo(path: Path): UnixFileInfo = {
+    val posix = Files.readAttributes(path, classOf[PosixFileAttributes])
+    val (ino: Long, dev: Long) = (inoF.invoke(posix): Any, devF.invoke(posix): Any)
+    UnixFileInfo(dev, ino)
   }
 
   import scala.language.implicitConversions
@@ -183,13 +211,26 @@ object Hasher {
 final case class FileAndMetadata(fileInfo: FileInfo, metadata: Metadata)
 class RepositoryManager(val config: RepositoryConfig) {
   val FileNamePattern = """^[0-9a-f]{128}$""".r
-  def allFiles: Iterable[FileAndMetadata] = {
-    import Scanner._
+  import Scanner._
+
+  def allRepoFiles: Iterable[FileInfo] =
     Scanner.allFilesMatching(config.storageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
       .map(f => Hash.fromString(config.hashAlgorithm, f.getName))
       .map(config.fileInfoOf)
+
+  def allFiles: Iterable[FileAndMetadata] = {
+    allRepoFiles
       .map { fileInfo =>
         FileAndMetadata(fileInfo, MetadataStore.load(fileInfo))
       }
+  }
+
+  lazy val inodeMap: Map[(Long, Long), FileInfo] = {
+    allRepoFiles
+      .map { info =>
+        val UnixFileInfo(dev, ino) = Scanner.unixFileInfo(info.repoFile.toPath)
+
+        (dev, ino) -> info
+      }.toMap
   }
 }
