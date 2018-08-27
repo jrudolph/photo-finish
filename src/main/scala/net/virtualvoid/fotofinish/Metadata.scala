@@ -73,6 +73,9 @@ trait MetadataExtractor { thisExtractor =>
   def kind: String
   def version: Int
 
+  /** Override to check allow new entries created for the same version */
+  def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[EntryT]]): Boolean = true
+
   // TODO: support streaming metadata extraction?
   def extractMetadata(file: FileInfo): Option[MetadataEntry[EntryT]] =
     Try {
@@ -164,9 +167,11 @@ object MetadataStore {
   def updateMetadata(target: FileInfo, repoConfig: RepositoryConfig): immutable.Seq[MetadataEntry[_]] = {
     val infos = load(target).entries
     RegisteredMetadataExtractors.flatMap { ex =>
-      if (!infos.exists(_.extractor == ex)) {
-        println(s"Metadata [${ex.kind}] missing for [${target.repoFile}], rerunning analysis...")
-        val result = ex.extractMetadata(target)
+      val exInfos = infos.collect {
+        case e: MetadataEntry[ex.EntryT] if e.extractor == ex => e
+      }
+      if (exInfos.isEmpty || !ex.isCurrent(target, exInfos)) {
+        println(s"Metadata [${ex.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
         if (result.isDefined) store(result.get, repoConfig)
         result.toSeq
       } else immutable.Seq.empty[MetadataEntry[_]]
@@ -213,6 +218,9 @@ object IngestionDataExtractor extends MetadataExtractor {
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.dateTimeFormat
   override implicit def metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
+
+  override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
+    entries.exists(_.data.originalFileName == file.originalFile.getName)
 }
 
 final case class ExifBaseData(
