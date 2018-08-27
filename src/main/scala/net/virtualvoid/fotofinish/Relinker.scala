@@ -2,13 +2,28 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
 import java.text.SimpleDateFormat
 import java.util.Date
+
+import scala.collection.immutable
 
 import akka.http.scaladsl.model.DateTime
 
 object Relinker {
-  def createLinkedDirByYearMonth(manager: RepositoryManager): Unit = {
+  def byOriginalFileName(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
+    val parentDir = new File(manager.config.storageDir, "by-original-name")
+
+    MetadataShortcuts.OriginalFullFilePaths(fileAndMetadata.metadata)
+      .map { p =>
+        if (p.startsWith("/")) p.drop(1)
+        else p
+      }.map { p =>
+        new File(parentDir, p)
+      }
+  }
+
+  def byYearMonth(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
     def dateDir(dateTaken: Option[DateTime]): File = {
       val sub = dateTaken match {
         case None       => "unknown"
@@ -22,42 +37,49 @@ object Relinker {
 
     val fileDateFormat = new SimpleDateFormat("yyyyMMdd-HHmmss")
 
-    manager.allFiles
+    val original = fileAndMetadata.metadata.get[IngestionData].map(_.originalFileName).getOrElse("unknown.jpg")
+    val date = fileAndMetadata.metadata.get[ExifBaseData].flatMap(_.dateTaken)
+
+    val fileName = date match {
+      case Some(d) =>
+        val formattedDate = fileDateFormat.format(new Date(d.clicks))
+        s"$formattedDate-$original"
+      case None => original
+    }
+
+    val dir = dateDir(date)
+    new File(dir, fileName) :: Nil
+  }
+  def createDirStructure(manager: RepositoryManager)(locator: FileAndMetadata => immutable.Seq[File]): Unit = {
+    manager.allFiles()
       .foreach { f =>
-        val original = f.metadata.get[IngestionData].map(_.originalFileName).getOrElse("unknown.jpg")
-        val date = f.metadata.get[ExifBaseData].flatMap(_.dateTaken)
-
-        val fileName = date match {
-          case Some(d) =>
-            val formattedDate = fileDateFormat.format(new Date(d.clicks))
-            s"$formattedDate-$original"
-          case None => original
-        }
-
-        val dir = dateDir(date)
         val repoPath = f.fileInfo.repoFile.toPath
+        locator(f).foreach(createLink)
 
-        def linkTarget(i: Int): Unit = {
-          val targetPath = new File(dir, s"${i}_$fileName").toPath
+        def createLink(targetFile: File): Unit = {
 
-          if (Files.exists(targetPath))
-            if (targetPath.toRealPath() == repoPath.toRealPath())
-              () // link already there
+          val fileName = targetFile.getName
+          val dir = targetFile.getParent
+          targetFile.getParentFile.mkdirs()
+
+          def linkTarget(i: Int): Unit = {
+            val targetPath =
+              if (i == 0) targetFile.toPath
+              else new File(dir, s"${fileName}_${i}").toPath
+
+            if (Files.exists(targetPath))
+              if (targetPath.toRealPath() == repoPath.toRealPath())
+                () // link already there
+              else {
+                println(s"File already exists in dir at [$targetPath] but is no link to [${repoPath.toRealPath()}] but to [${targetPath.toRealPath()}]")
+                linkTarget(i + 1)
+              }
             else
-              linkTarget(i + 1)
-          else
-            Files.createSymbolicLink(targetPath, repoPath)
+              Files.createSymbolicLink(targetPath, repoPath)
+          }
+
+          linkTarget(0)
         }
-
-        val targetPath = new File(dir, fileName).toPath
-
-        if (Files.exists(targetPath))
-          if (targetPath.toRealPath() == repoPath.toRealPath())
-            () // link already there
-          else
-            linkTarget(0)
-        else
-          Files.createSymbolicLink(targetPath, repoPath)
       }
   }
 
