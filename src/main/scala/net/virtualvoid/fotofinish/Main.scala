@@ -28,7 +28,7 @@ object MainScanner extends App {
   val infos = new Scanner(repoConfig, manager).scan(dir)
 
   println("Updating metadata")
-  infos.foreach(MetadataStore.updateMetadata(_, repoConfig))
+  infos.par.foreach(MetadataStore.updateMetadata(_, repoConfig))
 
   println("Updating by-date folder")
   Relinker.createDirStructure(manager)(Relinker.byYearMonth(manager))
