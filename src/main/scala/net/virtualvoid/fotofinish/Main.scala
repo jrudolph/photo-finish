@@ -225,7 +225,7 @@ class RepositoryManager(val config: RepositoryConfig) {
   import Scanner._
 
   def allRepoFiles(): Iterator[FileInfo] =
-    Scanner.allFilesMatching(config.storageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
+    Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
       .iterator
       .map(f => Hash.fromString(config.hashAlgorithm, f.getName))
       .map(config.fileInfoOf)
