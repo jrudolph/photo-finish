@@ -100,7 +100,7 @@ trait MetadataExtractor { thisExtractor =>
 
   import JsonExtra._
   import MetadataJsonProtocol._
-  private implicit def entryFormat = new JsonFormat[MetadataEntry[EntryT]] {
+  private implicit val entryFormat = new JsonFormat[MetadataEntry[EntryT]] {
     override def read(json: JsValue): MetadataEntry[EntryT] = {
       val header = json.convertTo[MetadataHeader]
       require(header.kind == kind && header.version == version)
@@ -239,7 +239,7 @@ object IngestionDataExtractor extends MetadataExtractor {
     )
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.dateTimeFormat
-  override implicit def metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
+  override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 
   override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
     entries.exists(_.data.originalFileName == file.originalFile.getName)
@@ -314,7 +314,7 @@ object ThumbnailExtractor extends MetadataExtractor {
 
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.byteStringFormat
-  override implicit def metadataFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail)
+  override implicit val metadataFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail)
 }
 
 object MetadataShortcuts {
