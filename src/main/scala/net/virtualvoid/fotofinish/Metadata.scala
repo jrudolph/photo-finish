@@ -136,7 +136,8 @@ object MetadataStore {
   val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
     ExifBaseDataExtractor,
     IngestionDataExtractor,
-    ThumbnailExtractor
+    ThumbnailExtractor,
+    FaceDataExtractor
   )
 
   def store[T](metadata: MetadataEntry[T], repoConfig: RepositoryConfig): Unit = {

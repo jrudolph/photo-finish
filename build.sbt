@@ -9,6 +9,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-http" % akkaHttpV,
   "io.spray" %% "spray-json" % "1.3.4",
   "com.drewnoakes" % "metadata-extractor" % "2.11.0",
+  "net.java.dev.jna" % "jna" % "4.5.2",
   "org.specs2" %% "specs2-core" % specs2V % "test",
 )
 
@@ -41,3 +42,6 @@ paradoxMaterialTheme in Compile := {
 paradoxProperties ++= Map(
   "github.base_url" -> (paradoxMaterialTheme in Compile).value.properties.getOrElse("repo", "")
 )
+
+fork in run := true
+javaOptions in run += "-Djna.library.path=/home/johannes/git/self/photo-finish"
