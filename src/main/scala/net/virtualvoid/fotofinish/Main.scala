@@ -21,7 +21,7 @@ object Settings {
   val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
   val manager = new RepositoryManager(repoConfig)
 }
-object Main extends App {
+object MainScanner extends App {
   import Settings._
 
   println("Ingesting new files")
