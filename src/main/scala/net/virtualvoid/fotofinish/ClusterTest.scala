@@ -1,26 +1,39 @@
 package net.virtualvoid.fotofinish
 
 import java.io.File
+import java.nio.file.Files
+import java.text.SimpleDateFormat
 
 import net.virtualvoid.fotofinish.graph.ChineseWhispers
 import net.virtualvoid.fotofinish.graph.Graph
 
 import scala.collection.immutable
+import scala.runtime.ScalaRunTime
 
 object ClusterTest extends App {
   val Threshold = 0.25 // 0.6*0.6 ?
-  val NumFaces = 200
+  val NumFaces = 1000
 
-  val imageFaces =
+  val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =
+    MetadataStore.loadAllEntriesFrom(new File("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz"))
+      .getEntries[FaceData]
+      .filter(_.data.faces.nonEmpty)
+      .flatMap { e =>
+        val fileInfo = Settings.manager.config.fileInfoOf(e.header.forData)
+        e.data.faces.zipWithIndex.map {
+          case (info, idx) => (fileInfo, info, idx)
+        }
+      }
+  /*  val imageFaces =
     Settings.manager.allFiles
       .collect {
         case FileAndMetadata(f, m) if m.get[FaceData].exists(_.faces.nonEmpty) =>
           f -> m.get[FaceData].get
       }
       .flatMap {
-        case (file, faceData) => faceData.faces.map(file ->)
+        case (file, faceData) => faceData.faces.zipWithIndex.map { case (info, idx) => (file, info, idx) }
       }
-      .toStream
+      .toStream*/
 
   def sqdist(a1: immutable.Seq[Float], a2: immutable.Seq[Float]): Float =
     (a1, a2).zipped
@@ -33,8 +46,10 @@ object ClusterTest extends App {
   val candidates = imageFaces.take(NumFaces)
   println(s"Found ${candidates.size} candidate faces")
 
-  type VertexData = (File, Rectangle)
-  def vertexData(e: (FileInfo, FaceInfo)): VertexData = (e._1.repoFile, e._2.rectangle)
+  case class VertexData(repoFile: File, rectangle: Rectangle, faceIndex: Int) {
+    override val hashCode: Int = ScalaRunTime._hashCode(this)
+  }
+  def vertexData(e: (FileInfo, FaceInfo, Int)): VertexData = VertexData(e._1.repoFile, e._2.rectangle, e._3)
 
   val edges =
     candidates.flatMap { c1 =>
@@ -49,23 +64,37 @@ object ClusterTest extends App {
   val graph = Graph(vertices, edges)
   val result = ChineseWhispers.cluster(graph, iterations = 20)
   println(s"Found ${result.size} clusters")
+  val faceDir = new File("/tmp/clusterfaces/")
+  faceDir.mkdirs()
 
-  result.toSeq.zipWithIndex.foreach {
+  result.toSeq.sortBy(_.size).zipWithIndex.foreach {
     case (cluster, idx) =>
       println()
-      println(cluster.map(d => d._1).mkString(" "))
+      println(cluster.map(d => d.repoFile).mkString(" "))
 
       val dir = new File(s"/tmp/clusters/$idx")
       dir.mkdirs()
 
       cluster.toSeq.zipWithIndex.foreach(saveFaceToFile(dir))
   }
-  def saveFaceToFile(dir: File)(e: ((File, Rectangle), Int)): Unit = e match {
-    case ((file, rectangle), idx) =>
+
+  def saveFaceToFile(targetDir: File)(e: (VertexData, Int)): Unit = e match {
+    case (VertexData(file, rectangle, faceIdx), idx) =>
       import sys.process._
-      val fileName = new File(dir, s"$idx.jpg")
-      val cmd = s"convert ${file.getAbsolutePath} -crop ${rectangle.width}x${rectangle.height}+${rectangle.left}+${rectangle.top} ${fileName.getAbsolutePath}"
-      cmd.!
+      val meta = Settings.manager.metadataFor(Hash.fromString(HashAlgorithm.Sha512, file.getName))
+      val fileDateFormat = new SimpleDateFormat("yyyyMMdd-HHmmss")
+      val dateStr = MetadataShortcuts.DateTaken(meta).map(dt => fileDateFormat.format(new java.util.Date(dt.clicks))).getOrElse("unknown")
+      val fileName = s"$dateStr-${file.getName}-$faceIdx.jpg"
+      val faceFile = new File(faceDir, fileName)
+
+      if (!faceFile.exists) {
+        val cmd = s"convert ${file.getAbsolutePath} -crop ${rectangle.width}x${rectangle.height}+${rectangle.left}+${rectangle.top} ${faceFile.getAbsolutePath}"
+        println(cmd)
+        cmd.!
+        faceFile.setWritable(false)
+      }
+      val targetFile = new File(targetDir, fileName)
+      Files.createLink(targetFile.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
   }
 
   val unrelatedFaces: Set[VertexData] = (candidates.map(vertexData).toSet diff vertices)
