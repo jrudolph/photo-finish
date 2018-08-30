@@ -2,6 +2,7 @@ package net.virtualvoid.fotofinish
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.file.Files
@@ -154,12 +155,15 @@ object MetadataStore {
     } finally out.close()
   }
 
-  def load(target: FileInfo): Metadata = Metadata {
-    if (!target.metadataFile.exists()) Nil
-    else
-      Source.fromInputStream(new GZIPInputStream(new FileInputStream(target.metadataFile))).getLines()
-        .flatMap(readMetadataEntry).toVector
-  }
+  def load(target: FileInfo): Metadata = loadAllEntriesFrom(target.metadataFile)
+
+  def loadAllEntriesFrom(metadataFile: File): Metadata =
+    Metadata {
+      if (!metadataFile.exists()) Nil
+      else
+        Source.fromInputStream(new GZIPInputStream(new FileInputStream(metadataFile))).getLines()
+          .flatMap(readMetadataEntry).toVector
+    }
 
   def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = Try {
     import MetadataJsonProtocol._
