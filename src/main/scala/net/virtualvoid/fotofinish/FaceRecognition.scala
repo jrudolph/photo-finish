@@ -55,7 +55,7 @@ object FaceDataExtractor extends MetadataExtractor {
   type EntryT = FaceData
 
   override def kind: String = "net.virtualvoid.fotofinish.FaceData"
-  override def version: Int = 2
+  override def version: Int = 3
 
   override def classTag: ClassTag[FaceData] = scala.reflect.classTag[FaceData]
 
