@@ -136,7 +136,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
       if (!inRepo.exists()) {
         println(s"Creating repo file for [$file] at [$inRepo] exists: ${inRepo.exists()}")
         Files.createDirectories(inRepo.getParentFile.toPath)
-        if (file.toPath.getFileSystem == inRepo.toPath.getFileSystem)
+        if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath()))
           Files.createLink(inRepo.toPath, file.toPath)
         else
           Files.copy(file.toPath, inRepo.toPath)
