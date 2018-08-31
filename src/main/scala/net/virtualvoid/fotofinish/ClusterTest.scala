@@ -10,9 +10,15 @@ import net.virtualvoid.fotofinish.graph.Graph
 import scala.collection.immutable
 import scala.io.Source
 
+/*
+TODO:
+ * allow multiple mappings per person
+ * detect mapping conflicts
+ */
+
 object ClusterTest extends App {
   val Threshold = 0.2 // 0.6*0.6 ?
-  val NumFaces = 10000
+  val NumFaces = 15000
   val ShortHash = 20
 
   type FeatureVector = Array[Float]
@@ -99,6 +105,7 @@ object ClusterTest extends App {
 
   val vertices: Set[VertexData] = edges.flatMap(e => e._1 :: e._2 :: Nil).toSet
   println(s"Found ${edges.size} edges in ${vertices.size} vertices")
+  println("Now clustering")
   val graph = Graph(vertices, edges)
   val result = ChineseWhispers.cluster(graph, iterations = 20)
   println(s"Found ${result.size} clusters")
@@ -106,7 +113,7 @@ object ClusterTest extends App {
   faceDir.mkdirs()
 
   result.toSeq
-    .filter(_.size > 2)
+    .filter(_.size > 10)
     .sortBy(_.size).zipWithIndex.foreach {
       case (cluster, idx) =>
         println()
@@ -149,7 +156,7 @@ object ClusterTest extends App {
           val fileName = fileNameForVertexData(vd)
           val faceFile = ensureFace(vd)
           val dist = sqdistFloat(medoid.faceInfo.modelData, vd.faceInfo.modelData)
-          val targetFile = new File(clusterDir, s"$dist-$fileName")
+          val targetFile = new File(clusterDir, s"${dist.toString.drop(2)}-$fileName")
           Files.createLink(targetFile.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
           val targetFileByDate = new File(clusterDirByDate, s"$fileName")
           Files.createLink(targetFileByDate.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
@@ -185,9 +192,9 @@ object ClusterTest extends App {
     Files.createLink(targetFile.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
   }
 
-  val unrelatedFaces: Set[VertexData] = (candidates.map(vertexData).toSet diff vertices)
+  /*val unrelatedFaces: Set[VertexData] = (candidates.map(vertexData).toSet diff vertices)
   println(s"Saving ${unrelatedFaces.size} unrelated faces to files")
   val unknownDir = new File(s"/tmp/clusters/unknown")
   unknownDir.mkdirs()
-  unrelatedFaces.toSeq.foreach(createFaceLinkTo(unknownDir))
+  unrelatedFaces.toSeq.foreach(createFaceLinkTo(unknownDir))*/
 }
