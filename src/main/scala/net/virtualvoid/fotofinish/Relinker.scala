@@ -46,7 +46,7 @@ object Relinker {
         s"$formattedDate-$original"
       case None =>
         val hash = fileAndMetadata.fileInfo.hash.asHexString.take(20)
-        s"${hash.take(2)}/$hash-$original"
+        s"$hash-$original"
     }
 
     val dir = dateDir(date)
