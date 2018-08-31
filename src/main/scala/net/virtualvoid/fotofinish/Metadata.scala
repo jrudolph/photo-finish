@@ -180,25 +180,29 @@ object MetadataStore {
    * Reruns all known extractors when metadata is missing.
    */
   def updateMetadata(target: FileInfo, repoConfig: RepositoryConfig): immutable.Seq[MetadataEntry[_]] = {
-    val infos = load(target).entries
-    RegisteredMetadataExtractors.flatMap { ex =>
-      val exInfos = infos.collect {
-        case e: MetadataEntry[ex.EntryT] if e.extractor == ex => e
-      }
-      if (exInfos.isEmpty || !ex.isCurrent(target, exInfos)) {
-        println(s"Metadata [${ex.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
-        val result: Option[MetadataEntry[ex.EntryT]] =
-          Try(ex.extractMetadata(target)) match {
-            case Success(m) =>
-              m
-            case Failure(exception) =>
-              println(s"Metadata extraction [${ex.kind} failed for [${target.repoFile}] with ${exception.getMessage}")
-              None
-          }
-        if (result.isDefined) store(result.get, repoConfig)
-        result.toSeq
-      } else immutable.Seq.empty[MetadataEntry[_]]
-    }
+    val infos = load(target)
+    RegisteredMetadataExtractors
+      .flatMap(e => updateMetadataFor(target, e, infos, repoConfig).toVector)
+  }
+
+  def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, repoConfig: RepositoryConfig): Option[MetadataEntry[_]] =
+    updateMetadataFor(target, extractor, load(target), repoConfig)
+
+  private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata, repoConfig: RepositoryConfig): Option[MetadataEntry[_]] = {
+    val exInfos = existing.getEntries(extractor.classTag)
+    if (exInfos.isEmpty || !extractor.isCurrent(target, exInfos)) {
+      println(s"Metadata [${extractor.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
+      val result: Option[MetadataEntry[extractor.EntryT]] =
+        Try(extractor.extractMetadata(target)) match {
+          case Success(m) =>
+            m
+          case Failure(exception) =>
+            println(s"Metadata extraction [${extractor.kind} failed for [${target.repoFile}] with ${exception.getMessage}")
+            None
+        }
+      if (result.isDefined) store(result.get, repoConfig)
+      result
+    } else None
   }
 
   def findExtractor(header: MetadataHeader): Option[MetadataExtractor] =
