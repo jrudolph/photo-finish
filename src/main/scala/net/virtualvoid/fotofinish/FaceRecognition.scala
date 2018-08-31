@@ -23,7 +23,7 @@ object FaceRecognition {
         case f: Face.ByReference =>
           import f._
           val rect = Rectangle(left.toInt, top.toInt, right.toInt - left.toInt, bottom.toInt - top.toInt)
-          FaceInfo(rect, model.toVector)
+          FaceInfo(rect, model)
       }
 
     val settings = RecognizerSettings(1, numJitters)
@@ -39,7 +39,7 @@ case class Rectangle(
 )
 case class FaceInfo(
     rectangle: Rectangle,
-    modelData: immutable.Seq[Float]
+    modelData: Array[Float]
 )
 case class RecognizerSettings(
     recognizerLibVersion: Int,
