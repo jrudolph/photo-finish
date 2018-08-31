@@ -52,34 +52,38 @@ object Relinker {
   }
   def createDirStructure(manager: RepositoryManager)(locator: FileAndMetadata => immutable.Seq[File]): Unit = {
     manager.allFiles()
-      .foreach { f =>
-        val repoPath = f.fileInfo.repoFile.toPath
-        locator(f).foreach(createLink)
+      .zipWithIndex
+      .foreach {
+        case (f, idx) =>
+          if ((idx % 1000) == 0) println(s"At $idx")
 
-        def createLink(targetFile: File): Unit = {
+          val repoPath = f.fileInfo.repoFile.toPath
+          locator(f).foreach(createLink)
 
-          val fileName = targetFile.getName
-          val dir = targetFile.getParent
-          targetFile.getParentFile.mkdirs()
+          def createLink(targetFile: File): Unit = {
 
-          def linkTarget(i: Int): Unit = {
-            val targetPath =
-              if (i == 0) targetFile.toPath
-              else new File(dir, s"${fileName}_${i}").toPath
+            val fileName = targetFile.getName
+            val dir = targetFile.getParent
+            targetFile.getParentFile.mkdirs()
 
-            if (Files.exists(targetPath))
-              if (targetPath.toRealPath() == repoPath.toRealPath())
-                () // link already there
-              else {
-                println(s"File already exists in dir at [$targetPath] but is no link to [${repoPath.toRealPath()}] but to [${targetPath.toRealPath()}]")
-                linkTarget(i + 1)
-              }
-            else
-              Files.createSymbolicLink(targetPath, repoPath)
+            def linkTarget(i: Int): Unit = {
+              val targetPath =
+                if (i == 0) targetFile.toPath
+                else new File(dir, s"${fileName}_${i}").toPath
+
+              if (Files.exists(targetPath))
+                if (targetPath.toRealPath() == repoPath.toRealPath())
+                  () // link already there
+                else {
+                  println(s"File already exists in dir at [$targetPath] but is no link to [${repoPath.toRealPath()}] but to [${targetPath.toRealPath()}]")
+                  linkTarget(i + 1)
+                }
+              else
+                Files.createSymbolicLink(targetPath, repoPath)
+            }
+
+            linkTarget(0)
           }
-
-          linkTarget(0)
-        }
       }
   }
 
