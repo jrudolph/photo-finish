@@ -44,7 +44,9 @@ object Relinker {
       case Some(d) =>
         val formattedDate = fileDateFormat.format(new Date(d.clicks))
         s"$formattedDate-$original"
-      case None => original
+      case None =>
+        val hash = fileAndMetadata.fileInfo.hash.asHexString.take(20)
+        s"${hash.take(2)}/$hash-$original"
     }
 
     val dir = dateDir(date)
