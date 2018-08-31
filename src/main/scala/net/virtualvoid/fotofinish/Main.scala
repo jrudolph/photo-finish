@@ -15,7 +15,6 @@ import scala.collection.immutable
 import scala.util.Try
 
 object Settings {
-  val dir = new File("/home/johannes/Fotos/2018")
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 
   val repoConfig = RepositoryConfig(repo, HashAlgorithm.Sha512)
@@ -23,12 +22,22 @@ object Settings {
 }
 object MainScanner extends App {
   import Settings._
-
+  val dir = new File("/home/johannes/Fotos/2016")
   println("Ingesting new files")
   val infos = new Scanner(repoConfig, manager).scan(dir)
 
-  println("Updating metadata")
+  println("Updating basic metadata for ingested fotos")
+  infos.par.foreach(MetadataStore.updateMetadataFor(_, IngestionDataExtractor, repoConfig))
+
+  println("Updating exif metadata for ingested fotos")
+  infos.par.foreach(MetadataStore.updateMetadataFor(_, ExifBaseDataExtractor, repoConfig))
+
+  println("Updating all metadata for ingested fotos")
   infos.par.foreach(MetadataStore.updateMetadata(_, repoConfig))
+
+  println("Updating remaining metadata")
+  manager.allRepoFiles().toStream.par
+    .foreach(MetadataStore.updateMetadata(_, repoConfig))
 
   println("Updating by-date folder")
   Relinker.createDirStructure(manager)(Relinker.byYearMonth(manager))
