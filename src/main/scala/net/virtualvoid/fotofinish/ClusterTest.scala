@@ -96,12 +96,17 @@ object ClusterTest extends App {
   def vertexData(e: (FileInfo, FaceInfo, Int)): VertexData = VertexData(e._1.repoFile, e._2.rectangle, e._3, e._2)
 
   val edges =
-    candidates.flatMap { c1 =>
-      candidates
-        .filter(_._1.repoFile.getName.compareTo(c1._1.repoFile.getName) > 0) // edges just in one direction
-        .filter(c2 => c1._2.sqdist(c2._2) < Threshold)
-        .map(c2 => vertexData(c1) -> vertexData(c2))
-    }
+    candidates
+      .par
+      .flatMap { c1 =>
+        candidates
+          .filter { c2 =>
+            c2._1.repoFile.getName.compareTo(c1._1.repoFile.getName) > 0 &&
+              c1._2.sqdist(c2._2) < Threshold
+          }
+          .map(c2 => vertexData(c1) -> vertexData(c2))
+      }
+      .seq
 
   val vertices: Set[VertexData] = edges.flatMap(e => e._1 :: e._2 :: Nil).toSet
   println(s"Found ${edges.size} edges in ${vertices.size} vertices")
