@@ -161,7 +161,7 @@ object ClusterTest extends App {
           val fileName = fileNameForVertexData(vd)
           val faceFile = ensureFace(vd)
           val dist = sqdistFloat(medoid.faceInfo.modelData, vd.faceInfo.modelData)
-          val targetFile = new File(clusterDir, s"${dist.toString.drop(2)}-$fileName")
+          val targetFile = new File(clusterDir, f"${(dist * 100000).toInt}%07d-$fileName%s")
           Files.createLink(targetFile.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
           val targetFileByDate = new File(clusterDirByDate, s"$fileName")
           Files.createLink(targetFileByDate.toPath, faceFile.getAbsoluteFile.toPath.toAbsolutePath)
