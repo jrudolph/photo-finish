@@ -18,7 +18,7 @@ TODO:
 
 object ClusterTest extends App {
   val Threshold = 0.2 // 0.6*0.6 ?
-  val NumFaces = 15000
+  val NumFaces = 20000
   val ShortHash = 20
 
   type FeatureVector = Array[Float]
