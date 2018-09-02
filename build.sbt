@@ -17,8 +17,6 @@ lazy val core = project
 
       "com.typesafe.akka" %% "akka-actor" % akkaV, // for ByteString
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
-
-      "org.specs2" %% "specs2-core" % specs2V % "test",
     )
   )
 
