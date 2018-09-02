@@ -28,6 +28,7 @@ lazy val web = project
       "com.typesafe.akka" %% "akka-http" % akkaHttpV,
     )
   )
+  .enablePlugins(SbtTwirl)
   .dependsOn(core)
 
 lazy val docs = project
