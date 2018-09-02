@@ -118,7 +118,7 @@ object ClusterTest extends App {
   faceDir.mkdirs()
 
   result.toSeq
-    .filter(_.size > 10)
+    .filter(_.size > 2)
     .sortBy(_.size).zipWithIndex.foreach {
       case (cluster, idx) =>
         println()
