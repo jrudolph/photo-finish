@@ -32,7 +32,16 @@ lazy val web = project
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV,
-    )
+    ),
+
+    // Fix broken watchSources support in play/twirl, https://github.com/playframework/twirl/issues/186
+    // watch sources support
+    watchSources +=
+      WatchSource(
+        (sourceDirectory in TwirlKeys.compileTemplates).value,
+        "*.scala.*",
+        (excludeFilter in Global).value
+      )
   )
   .enablePlugins(SbtTwirl)
   .dependsOn(core)

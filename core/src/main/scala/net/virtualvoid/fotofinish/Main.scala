@@ -62,6 +62,8 @@ object MainScanner extends App {
 
 sealed trait HashAlgorithm {
   def name: String
+  def bits: Int
+  def hexStringLength: Int
   def createDigest(): MessageDigest
   protected def algorithm: String
 }
@@ -78,6 +80,9 @@ object HashAlgorithm {
 
     override def createDigest(): MessageDigest =
       MessageDigest.getInstance(algorithm)
+
+    val bits: Int = createDigest().getDigestLength * 8
+    val hexStringLength: Int = bits / 4 // one hex char per 4 bits
   }
 }
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
@@ -93,7 +98,7 @@ object Hash {
     fromString(alg, value)
   }.toOption
   def fromString(hashAlgorithm: HashAlgorithm, string: String): Hash = {
-    // TODO: check length
+    require(string.length == hashAlgorithm.hexStringLength)
     val data = ByteString(string.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
     Hash(hashAlgorithm, data)
   }
@@ -128,6 +133,17 @@ case class RepositoryConfig(
       metadataFile(hash),
       repoFile(hash)
     )
+
+  def fileInfoByHashPrefix(prefix: String, hashAlgorithm: HashAlgorithm = hashAlgorithm): Option[FileInfo] = {
+    require(prefix.size > 2)
+
+    val dir = new File(storageDir, s"by-${hashAlgorithm.name}/${prefix.take(2)}/")
+    import Scanner._
+    dir.listFiles(byFileName(name => name.startsWith(prefix) && name.length == hashAlgorithm.hexStringLength))
+      .headOption
+      .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
+  }
+
 }
 
 class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
