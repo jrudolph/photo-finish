@@ -68,44 +68,46 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
       fromOptional("Camera Model", CameraModel)(m => Html(m)) ++
       Seq(
         "Thumbnail" -> Html("""<img src="thumbnail" />"""),
-        "Ingestion Data" -> Html(ingestion.map(formatIngestionData).mkString("<br/>")),
+        "Ingestion Data" -> Html(ingestion.map(formatIngestionData).mkString("<br/>"))
       )
   }
 
   lazy val images: Route =
-    pathPrefix("sha512") {
-      pathPrefix(FileInfoBySha512HashPrefix) { fileInfo =>
-        import fileInfo.hash
-        val meta = manager.metadataFor(hash)
+    concat(
+      pathPrefix("sha512") {
+        pathPrefix(FileInfoBySha512HashPrefix) { fileInfo =>
+          import fileInfo.hash
+          val meta = manager.metadataFor(hash)
 
-        concat(
-          path("raw") {
-            getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
-          },
-          path("thumbnail") {
-            complete {
-              meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
-                HttpEntity(MediaTypes.`image/jpeg`, thumbData)
+          concat(
+            path("raw") {
+              getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
+            },
+            path("thumbnail") {
+              complete {
+                meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
+                  HttpEntity(MediaTypes.`image/jpeg`, thumbData)
+                }
+              }
+            },
+            path("face" / IntNumber) { i =>
+              complete {
+                meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+                  HttpEntity(
+                    MediaTypes.`image/jpeg`,
+                    ImageTools.crop(fileInfo.repoFile, face.rectangle))
+                }
+              }
+            },
+            redirectToTrailingSlashIfMissing(StatusCodes.Found) {
+              pathSingleSlash {
+                complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
               }
             }
-          },
-          path("face" / IntNumber) { i =>
-            complete {
-              meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
-                HttpEntity(
-                  MediaTypes.`image/jpeg`,
-                  ImageTools.crop(fileInfo.repoFile, face.rectangle))
-              }
-            }
-          },
-          redirectToTrailingSlashIfMissing(StatusCodes.Found) {
-            pathSingleSlash {
-              complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
-            }
-          }
-        )
+          )
+        }
       }
-    }
+    )
 
 }
 
