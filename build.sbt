@@ -4,10 +4,12 @@ val akkaHttpV = "10.1.4"
 
 val specs2V = "4.3.2"
 
-lazy val root = Project("root", file("."))
+lazy val root: Project = Project("root", file("."))
   .aggregate(core, web, docs)
 
-lazy val core = project
+val rootRef = ProjectRef(file("."), "root")
+
+lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
@@ -17,7 +19,11 @@ lazy val core = project
 
       "com.typesafe.akka" %% "akka-actor" % akkaV, // for ByteString
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
-    )
+    ),
+
+    baseDirectory in reStart := (baseDirectory in rootRef).value,
+    javaOptions in run += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
+    javaOptions in reStart += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
   )
 
 lazy val web = project
