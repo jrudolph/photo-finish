@@ -1,0 +1,29 @@
+@import net.virtualvoid.fotofinish.FileInfo
+@import net.virtualvoid.fotofinish.{ Metadata, MetadataShortcuts }
+
+@(fileInfo: FileInfo, metadata: Metadata, metadataFields: Seq[(String, Html)])
+
+<img src="raw" height="500px"/>
+
+<h2>Metadata</h2>
+
+<table>
+    <tr>
+        <th>Description</th>
+        <th>Data</th>
+    </tr>
+
+@for((desc, data) <- metadataFields) {
+    <tr>
+        <td>@desc</td>
+        <td>@data</td>
+    </tr>
+}
+</table>
+
+
+<h2>Faces</h2>
+
+@for(i <- metadata.get(MetadataShortcuts.Faces).indices) {
+<img src="face/@i" height="150px"/>
+}
