@@ -4,6 +4,7 @@ package metadata
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -12,7 +13,6 @@ import scala.io.Source
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-
 import spray.json._
 
 object MetadataStore {
@@ -31,10 +31,13 @@ object MetadataStore {
      */
     val fos = new FileOutputStream(repoConfig.metadataFile(metadata.header.forData), true)
     val out = new GZIPOutputStream(fos)
-    try {
-      out.write(metadata.extractor.create(metadata).compactPrint.getBytes("utf8"))
-      out.write('\n')
-    } finally out.close()
+    try storeTo(metadata, fos)
+    finally out.close()
+  }
+
+  def storeTo[T](metadata: MetadataEntry[T], out: OutputStream): Unit = {
+    out.write(metadata.extractor.create(metadata).compactPrint.getBytes("utf8"))
+    out.write('\n')
   }
 
   def load(target: FileInfo): Metadata = loadAllEntriesFrom(target.metadataFile)
