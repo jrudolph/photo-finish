@@ -11,7 +11,8 @@ import scala.util.Try
 
 sealed trait HashAlgorithm {
   def name: String
-  def bits: Int
+  def bitLength: Int
+  def byteLength: Int
   def hexStringLength: Int
   def createDigest(): MessageDigest
   protected def algorithm: String
@@ -20,7 +21,11 @@ object HashAlgorithm {
   val Sha512: HashAlgorithm = new Impl("SHA-512")
   val Algorithms = Vector(Sha512)
 
-  def byName(name: String): Option[HashAlgorithm] = Algorithms.find(_.name == name)
+  def byName(name: String): Option[HashAlgorithm] =
+    name match {
+      case "sha-512" => Some(Sha512)
+      case _         => Algorithms.find(_.name == name)
+    }
 
   private class Impl(val algorithm: String) extends HashAlgorithm {
     require(!name.contains(":"))
@@ -30,8 +35,9 @@ object HashAlgorithm {
     override def createDigest(): MessageDigest =
       MessageDigest.getInstance(algorithm)
 
-    val bits: Int = createDigest().getDigestLength * 8
-    val hexStringLength: Int = bits / 4 // one hex char per 4 bits
+    val bitLength: Int = byteLength * 8
+    val byteLength: Int = createDigest().getDigestLength
+    val hexStringLength: Int = byteLength * 2 // one hex char per 4 bits
   }
 }
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
@@ -48,7 +54,18 @@ object Hash {
   }.toOption
   def fromString(hashAlgorithm: HashAlgorithm, string: String): Hash = {
     require(string.length == hashAlgorithm.hexStringLength)
-    val data = ByteString(string.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
+
+    @tailrec
+    def read(target: Array[Byte], at: Int): ByteString =
+      if (at < target.length) {
+        val twoHex = string.substring(at * 2, at * 2 + 2)
+        target(at) = java.lang.Short.parseShort(twoHex, 16).toByte
+        read(target, at + 1)
+      } else
+        ByteString(target)
+
+    //val data = ByteString(string.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
+    val data = read(new Array[Byte](hashAlgorithm.byteLength), at = 0)
     Hash(hashAlgorithm, data)
   }
 }
