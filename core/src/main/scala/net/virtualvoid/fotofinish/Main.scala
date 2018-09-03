@@ -14,6 +14,8 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.util.Try
 
+import metadata._
+
 object Settings {
   val repo = new File("/home/johannes/Fotos/tmp/repo")
 

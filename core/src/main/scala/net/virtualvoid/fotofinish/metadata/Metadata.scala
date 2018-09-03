@@ -1,4 +1,5 @@
 package net.virtualvoid.fotofinish
+package metadata
 
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream

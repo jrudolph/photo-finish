@@ -15,8 +15,11 @@ import akka.http.scaladsl.server.Route
 import akka.stream.ActorMaterializer
 import akka.util.ByteString
 import javax.imageio.ImageIO
-import net.virtualvoid.fotofinish.web.html.ImageInfo
 import play.twirl.api.Html
+
+import html.ImageInfo
+
+import metadata._
 
 object Server extends App {
   implicit val system = ActorSystem()

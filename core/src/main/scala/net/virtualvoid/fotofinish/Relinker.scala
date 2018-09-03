@@ -2,13 +2,14 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.Path
 import java.text.SimpleDateFormat
 import java.util.Date
 
 import scala.collection.immutable
 
 import akka.http.scaladsl.model.DateTime
+
+import metadata._
 
 object Relinker {
   def byOriginalFileName(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {

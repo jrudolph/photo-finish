@@ -1,4 +1,5 @@
 package net.virtualvoid.fotofinish
+package metadata
 
 import net.virtualvoid.facerecognition.Face
 import net.virtualvoid.facerecognition.FaceRecognitionLib

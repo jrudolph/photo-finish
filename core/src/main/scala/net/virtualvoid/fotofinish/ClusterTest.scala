@@ -1,5 +1,6 @@
 package net.virtualvoid.fotofinish
 
+import metadata._
 import java.io.File
 import java.nio.file.Files
 import java.text.SimpleDateFormat
