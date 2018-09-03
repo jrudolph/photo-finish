@@ -6,6 +6,7 @@ import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.HttpEntity
 import akka.http.scaladsl.model.MediaTypes
 import akka.http.scaladsl.model.StatusCodes
+import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.server.PathMatcher
 import akka.http.scaladsl.server.PathMatcher1
 import akka.http.scaladsl.server.Route
@@ -41,10 +42,11 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
   lazy val main: Route =
     pathPrefix("images")(images)
 
-  val FileInfoBySha512HashPrefix: PathMatcher1[FileInfo] =
-    PathMatcher(s"[0-9a-fA-F]{2,${HashAlgorithm.Sha512.hexStringLength}}".r).flatMap { prefix =>
-      //Hash.fromPrefixedString(HashAlgorithm.Sha512, hash)
-      manager.config.fileInfoByHashPrefix(prefix)
+  val HashPrefix = PathMatcher(s"[0-9a-fA-F]{2,${HashAlgorithm.Sha512.hexStringLength - 1}}".r)
+
+  val FileInfoBySha512Hash: PathMatcher1[FileInfo] =
+    PathMatcher(s"[0-9a-fA-F]{${HashAlgorithm.Sha512.hexStringLength}}".r).map { hash =>
+      manager.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
     }
 
   def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
@@ -72,37 +74,50 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
   lazy val images: Route =
     concat(
       pathPrefix("sha512") {
-        pathPrefix(FileInfoBySha512HashPrefix) { fileInfo =>
-          import fileInfo.hash
-          val meta = manager.metadataFor(hash)
+        concat(
+          pathPrefix(FileInfoBySha512Hash) { fileInfo =>
+            import fileInfo.hash
+            val meta = manager.metadataFor(hash)
 
-          concat(
-            path("raw") {
-              getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
-            },
-            path("thumbnail") {
-              complete {
-                meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
-                  HttpEntity(MediaTypes.`image/jpeg`, thumbData)
+            concat(
+              path("raw") {
+                getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
+              },
+              path("thumbnail") {
+                complete {
+                  meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
+                    HttpEntity(MediaTypes.`image/jpeg`, thumbData)
+                  }
+                }
+              },
+              path("face" / IntNumber) { i =>
+                complete {
+                  meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+                    HttpEntity(
+                      MediaTypes.`image/jpeg`,
+                      ImageTools.crop(fileInfo.repoFile, face.rectangle))
+                  }
+                }
+              },
+              redirectToTrailingSlashIfMissing(StatusCodes.Found) {
+                pathSingleSlash {
+                  complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
                 }
               }
-            },
-            path("face" / IntNumber) { i =>
-              complete {
-                meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
-                  HttpEntity(
-                    MediaTypes.`image/jpeg`,
-                    ImageTools.crop(fileInfo.repoFile, face.rectangle))
-                }
-              }
-            },
-            redirectToTrailingSlashIfMissing(StatusCodes.Found) {
-              pathSingleSlash {
-                complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
+            )
+          },
+          pathPrefix(HashPrefix) { prefix =>
+            extractUri { uri =>
+              manager.config.fileInfoByHashPrefix(prefix) match {
+                case Some(fileInfo) =>
+                  val newUri = uri.withPath(Uri.Path(uri.path.toString.replace(prefix, fileInfo.hash.asHexString)))
+                  redirect(newUri, StatusCodes.Found)
+                case None =>
+                  reject
               }
             }
-          )
-        }
+          }
+        )
       }
     )
 
