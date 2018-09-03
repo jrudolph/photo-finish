@@ -18,6 +18,9 @@ object FaceRecognition {
         faces.size,
         numJitters)
 
+    if (numRes == -1)
+      throw new RuntimeException("Face detection failed")
+
     val infos =
       faces.take(numRes).map {
         case f: Face.ByReference =>
