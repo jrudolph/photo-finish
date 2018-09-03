@@ -1,9 +1,6 @@
 package net.virtualvoid.fotofinish
 package web
 
-import java.io.ByteArrayOutputStream
-import java.io.File
-
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.HttpEntity
@@ -13,13 +10,10 @@ import akka.http.scaladsl.server.PathMatcher
 import akka.http.scaladsl.server.PathMatcher1
 import akka.http.scaladsl.server.Route
 import akka.stream.ActorMaterializer
-import akka.util.ByteString
-import javax.imageio.ImageIO
+import net.virtualvoid.fotofinish.metadata._
+import net.virtualvoid.fotofinish.util.ImageTools
+import net.virtualvoid.fotofinish.web.html.ImageInfo
 import play.twirl.api.Html
-
-import html.ImageInfo
-
-import metadata._
 
 object Server extends App {
   implicit val system = ActorSystem()
@@ -112,21 +106,4 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
       }
     )
 
-}
-
-object ImageTools {
-  def crop(fileName: File, rectangle: Rectangle): ByteString = {
-    val image = ImageIO.read(fileName)
-
-    // rectangles might reach outside of actual image so we need to clip at image edges
-    // to avoid exception with getSubimage
-    val croppedWidth = math.min(rectangle.width, image.getWidth - rectangle.left)
-    val croppedHeight = math.min(rectangle.height, image.getHeight - rectangle.top)
-    val sub = image.getSubimage(rectangle.left, rectangle.top, croppedWidth, croppedHeight)
-
-    val baos = new ByteArrayOutputStream()
-    ImageIO.write(sub, "jpeg", baos)
-
-    ByteString(baos.toByteArray)
-  }
 }

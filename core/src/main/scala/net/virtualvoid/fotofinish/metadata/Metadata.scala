@@ -1,32 +1,14 @@
 package net.virtualvoid.fotofinish
 package metadata
 
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.nio.file.Files
-import java.nio.file.attribute.BasicFileAttributes
 import java.util.Base64
-import java.util.zip.GZIPInputStream
-import java.util.zip.GZIPOutputStream
 
 import akka.http.scaladsl.model.DateTime
 import akka.util.ByteString
-import com.drew.imaging.ImageMetadataReader
-import com.drew.metadata.Directory
-import com.drew.metadata.exif.ExifDirectoryBase
-import com.drew.metadata.exif.ExifIFD0Directory
-import com.drew.metadata.exif.ExifSubIFDDirectory
-import javax.imageio.ImageIO
 import spray.json._
 
 import scala.collection.immutable
-import scala.io.Source
 import scala.reflect.ClassTag
-import scala.util.Failure
-import scala.util.Success
 import scala.util.Try
 
 final case class MetadataHeader(
@@ -100,8 +82,8 @@ trait MetadataExtractor { thisExtractor =>
 
   implicit def metadataFormat: JsonFormat[EntryT]
 
-  import JsonExtra._
   import MetadataJsonProtocol._
+  import util.JsonExtra._
   private implicit val entryFormat = new JsonFormat[MetadataEntry[EntryT]] {
     override def read(json: JsValue): MetadataEntry[EntryT] = {
       val header = json.convertTo[MetadataHeader]
@@ -133,212 +115,4 @@ final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
   def get[T: ClassTag]: Option[T] = getEntry[T].map(_.data)
 
   def get[T](shortcut: MetadataShortcuts.ShortCut[T]): T = shortcut(this)
-}
-
-object MetadataStore {
-  val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
-    ExifBaseDataExtractor,
-    IngestionDataExtractor,
-    ThumbnailExtractor,
-    FaceDataExtractor
-  )
-
-  def store[T](metadata: MetadataEntry[T], repoConfig: RepositoryConfig): Unit = {
-    /*
-     - Locate file
-     - If exists: append
-     - If not: create
-     */
-    val fos = new FileOutputStream(repoConfig.metadataFile(metadata.header.forData), true)
-    val out = new GZIPOutputStream(fos)
-    try {
-      out.write(metadata.extractor.create(metadata).compactPrint.getBytes("utf8"))
-      out.write('\n')
-    } finally out.close()
-  }
-
-  def load(target: FileInfo): Metadata = loadAllEntriesFrom(target.metadataFile)
-
-  def loadAllEntriesFrom(metadataFile: File): Metadata =
-    Metadata {
-      if (!metadataFile.exists()) Nil
-      else
-        Source.fromInputStream(new GZIPInputStream(new FileInputStream(metadataFile))).getLines()
-          .flatMap(readMetadataEntry).toVector
-    }
-
-  def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = Try {
-    import MetadataJsonProtocol._
-    val jsonValue = entry.parseJson
-    val header = jsonValue.convertTo[MetadataHeader]
-    findExtractor(header).map(_.get(jsonValue))
-  }.recover {
-    case e =>
-      println(s"Couldn't read metadata entry [$entry] because of [${e.getMessage}]")
-      None
-  }.get
-
-  /**
-   * Reruns all known extractors when metadata is missing.
-   */
-  def updateMetadata(target: FileInfo, repoConfig: RepositoryConfig): immutable.Seq[MetadataEntry[_]] = {
-    val infos = load(target)
-    RegisteredMetadataExtractors
-      .flatMap(e => updateMetadataFor(target, e, infos, repoConfig).toVector)
-  }
-
-  def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, repoConfig: RepositoryConfig): Option[MetadataEntry[_]] =
-    updateMetadataFor(target, extractor, load(target), repoConfig)
-
-  private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata, repoConfig: RepositoryConfig): Option[MetadataEntry[_]] = {
-    val exInfos = existing.getEntries(extractor.classTag)
-    if (exInfos.isEmpty || !extractor.isCurrent(target, exInfos)) {
-      println(s"Metadata [${extractor.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
-      val result: Option[MetadataEntry[extractor.EntryT]] =
-        Try(extractor.extractMetadata(target)) match {
-          case Success(m) =>
-            m
-          case Failure(exception) =>
-            println(s"Metadata extraction [${extractor.kind} failed for [${target.repoFile}] with ${exception.getMessage}")
-            None
-        }
-      if (result.isDefined) store(result.get, repoConfig)
-      result
-    } else None
-  }
-
-  def findExtractor(header: MetadataHeader): Option[MetadataExtractor] =
-    RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)
-}
-
-object JsonExtra {
-  implicit class RichJsValue(val jsValue: JsValue) extends AnyVal {
-    def +(field: (String, JsValue)): JsObject = {
-      val obj = jsValue.asJsObject
-      obj.copy(fields = obj.fields + field)
-    }
-    def field(name: String): JsValue =
-      jsValue.asJsObject.fields(name)
-  }
-}
-
-final case class IngestionData(
-    fileSize:                 Long,
-    originalFileName:         String,
-    originalFilePath:         String,
-    originalFileCreationDate: DateTime,
-    originalFileModifiedDate: DateTime,
-    repoFileModifiedDate:     DateTime
-) {
-  def originalFullFilePath: String = originalFilePath + "/" + originalFileName
-}
-object IngestionDataExtractor extends MetadataExtractor {
-  type EntryT = IngestionData
-  override def kind: String = "ingestion-data"
-  override def version: Int = 2
-  override def classTag: ClassTag[IngestionData] = implicitly[ClassTag[IngestionData]]
-
-  override protected def extract(file: FileInfo): IngestionData =
-    IngestionData(
-      file.originalFile.length(),
-      file.originalFile.getName,
-      file.originalFile.getParent,
-      DateTime(Files.readAttributes(file.originalFile.toPath, classOf[BasicFileAttributes]).creationTime().toMillis),
-      DateTime(file.originalFile.lastModified()),
-      DateTime(file.repoFile.lastModified())
-    )
-  import DefaultJsonProtocol._
-  import MetadataJsonProtocol.dateTimeFormat
-  override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
-
-  override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
-    entries.exists(_.data.originalFileName == file.originalFile.getName)
-}
-
-final case class ExifBaseData(
-    width:       Option[Int],
-    height:      Option[Int],
-    dateTaken:   Option[DateTime],
-    cameraModel: Option[String]
-)
-object ExifBaseDataExtractor extends MetadataExtractor {
-  override type EntryT = ExifBaseData
-
-  override def kind: String = "exif-base-data"
-  override def version: Int = 1
-
-  override def classTag: ClassTag[ExifBaseData] = implicitly[ClassTag[ExifBaseData]]
-
-  import DefaultJsonProtocol._
-  import MetadataJsonProtocol.dateTimeFormat
-  override implicit def metadataFormat: JsonFormat[ExifBaseData] = jsonFormat4(ExifBaseData)
-
-  override protected def extract(file: FileInfo): ExifBaseData = {
-    val metadata = ImageMetadataReader.readMetadata(file.repoFile)
-    val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
-    val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
-    val dirs = dir0.toSeq ++ dir1.toSeq
-
-    def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
-      tag =>
-        dirs.collectFirst {
-          case dir if dir.containsTag(tag) => Option(tped(dir, tag))
-        }.flatten
-    def dateEntry = entry((dir, tag) => DateTime(dir.getDate(tag).getTime))
-    def intEntry = entry(_.getInt(_))
-    def stringEntry = entry(_.getString(_))
-
-    val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH)
-    val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT)
-    val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
-    val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
-
-    ExifBaseData(width, height, date, model)
-  }
-}
-
-final case class Thumbnail(
-    width:  Int,
-    height: Int,
-    data:   ByteString
-)
-object ThumbnailExtractor extends MetadataExtractor {
-  type EntryT = Thumbnail
-
-  override def kind: String = "thumbnail"
-  override def version: Int = 2
-
-  override def classTag: ClassTag[Thumbnail] = implicitly[ClassTag[Thumbnail]]
-
-  override protected def extract(file: FileInfo): Thumbnail = {
-    import sys.process._
-    val baos = new ByteArrayOutputStream
-    val res = s"""convert ${file.repoFile.getCanonicalPath} -thumbnail 150 -quality 20 -auto-orient -""".#>(baos).!
-    require(res == 0)
-    val imageBytes = ByteString.fromArray(baos.toByteArray)
-    // TODO: optimize memory usage
-    val image = ImageIO.read(new ByteArrayInputStream(baos.toByteArray))
-
-    Thumbnail(image.getWidth, image.getHeight, imageBytes)
-  }
-
-  import DefaultJsonProtocol._
-  import MetadataJsonProtocol.byteStringFormat
-  override implicit val metadataFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail)
-}
-
-object MetadataShortcuts {
-  type ShortCut[T] = Metadata => T
-
-  def optional[E: ClassTag, T](f: E => Option[T]): ShortCut[Option[T]] = _.getEntry[E].flatMap(e => f(e.data))
-  def manyFromManyEntries[E: ClassTag, T](f: E => T): ShortCut[immutable.Seq[T]] = _.getEntries[E].map(e => f(e.data))
-  def manyFromSingle[E: ClassTag, T](f: E => immutable.Seq[T]): ShortCut[immutable.Seq[T]] = _.get[E].toVector.flatMap(f)
-
-  val DateTaken = optional[ExifBaseData, DateTime](_.dateTaken)
-  val CameraModel = optional[ExifBaseData, String](_.cameraModel)
-  val OriginalFileNames = manyFromManyEntries[IngestionData, String](_.originalFileName)
-  val OriginalFolders = manyFromManyEntries[IngestionData, String](x => x.originalFilePath)
-  val OriginalFullFilePaths = manyFromManyEntries[IngestionData, String](x => x.originalFullFilePath)
-  val Thumbnail = optional[Thumbnail, ByteString](t => Some(t.data))
-  val Faces = manyFromSingle[FaceData, FaceInfo](_.faces)
 }
