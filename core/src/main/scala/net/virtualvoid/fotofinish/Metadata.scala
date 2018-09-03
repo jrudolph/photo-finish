@@ -127,6 +127,7 @@ final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
     entries.collect {
       case e @ MetadataEntry(_, _, data: E) => e.asInstanceOf[MetadataEntry[E]]
     }
+  def getValues[E: ClassTag]: immutable.Seq[E] = getEntries[E].map(_.data)
 
   def get[T: ClassTag]: Option[T] = getEntry[T].map(_.data)
 
@@ -329,10 +330,13 @@ object MetadataShortcuts {
   type ShortCut[T] = Metadata => T
 
   def optional[E: ClassTag, T](f: E => Option[T]): ShortCut[Option[T]] = _.getEntry[E].flatMap(e => f(e.data))
-  def manyFromSingle[E: ClassTag, T](f: E => T): ShortCut[immutable.Seq[T]] = _.getEntries[E].map(e => f(e.data))
+  def manyFromManyEntries[E: ClassTag, T](f: E => T): ShortCut[immutable.Seq[T]] = _.getEntries[E].map(e => f(e.data))
+  def manyFromSingle[E: ClassTag, T](f: E => immutable.Seq[T]): ShortCut[immutable.Seq[T]] = _.get[E].toVector.flatMap(f)
 
   val DateTaken = optional[ExifBaseData, DateTime](_.dateTaken)
   val CameraModel = optional[ExifBaseData, String](_.cameraModel)
-  val OriginalFileNames = manyFromSingle[IngestionData, String](_.originalFileName)
-  val OriginalFullFilePaths = manyFromSingle[IngestionData, String](x => x.originalFullFilePath)
+  val OriginalFileNames = manyFromManyEntries[IngestionData, String](_.originalFileName)
+  val OriginalFullFilePaths = manyFromManyEntries[IngestionData, String](x => x.originalFullFilePath)
+  val Thumbnail = optional[Thumbnail, ByteString](t => Some(t.data))
+  val Faces = manyFromSingle[FaceData, FaceInfo](_.faces)
 }
