@@ -20,8 +20,6 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
 
     println(s"Found $numFiles files with total size $totalSize")
 
-    allFiles.foreach(println)
-
     allFiles.map(ensureInRepo).toVector
   }
 
