@@ -17,6 +17,7 @@ object MetadataShortcuts {
   val Height = optional[ExifBaseData, Int](_.height)
   val DateTaken = optional[ExifBaseData, DateTime](_.dateTaken)
   val CameraModel = optional[ExifBaseData, String](_.cameraModel)
+  val Orientation = optional[ExifBaseData, Orientation](_.orientation)
   val OriginalFileNames = manyFromManyEntries[IngestionData, String](_.originalFileName)
   val OriginalFolders = manyFromManyEntries[IngestionData, String](x => x.originalFilePath)
   val OriginalFullFilePaths = manyFromManyEntries[IngestionData, String](x => x.originalFullFilePath)
