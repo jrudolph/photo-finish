@@ -1,6 +1,6 @@
 val scalaV = "2.12.6"
-val akkaV = "2.5.14"
-val akkaHttpV = "10.1.4"
+val akkaV = "2.5.16"
+val akkaHttpV = "10.1.5"
 
 val specs2V = "4.3.2"
 
