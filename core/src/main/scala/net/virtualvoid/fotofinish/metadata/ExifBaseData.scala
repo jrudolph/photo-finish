@@ -8,7 +8,6 @@ import com.drew.metadata.exif.ExifIFD0Directory
 import com.drew.metadata.exif.ExifSubIFDDirectory
 import net.virtualvoid.fotofinish.FileInfo
 import spray.json.DefaultJsonProtocol
-import spray.json.DefaultJsonProtocol.jsonFormat4
 import spray.json.JsonFormat
 
 import scala.reflect.ClassTag

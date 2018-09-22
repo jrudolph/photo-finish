@@ -6,7 +6,6 @@ import java.nio.file.attribute.BasicFileAttributes
 import akka.http.scaladsl.model.DateTime
 import net.virtualvoid.fotofinish.FileInfo
 import spray.json.DefaultJsonProtocol
-import spray.json.DefaultJsonProtocol.jsonFormat6
 import spray.json.JsonFormat
 
 import scala.collection.immutable

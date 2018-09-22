@@ -7,7 +7,6 @@ import akka.util.ByteString
 import javax.imageio.ImageIO
 import net.virtualvoid.fotofinish.FileInfo
 import spray.json.DefaultJsonProtocol
-import spray.json.DefaultJsonProtocol.jsonFormat3
 import spray.json.JsonFormat
 
 import scala.reflect.ClassTag
