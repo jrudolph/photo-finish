@@ -13,6 +13,8 @@ object MetadataShortcuts {
   def manyFromManyEntries[E: ClassTag, T](f: E => T): ShortCut[immutable.Seq[T]] = _.getEntries[E].map(e => f(e.data))
   def manyFromSingle[E: ClassTag, T](f: E => immutable.Seq[T]): ShortCut[immutable.Seq[T]] = _.get[E].toVector.flatMap(f)
 
+  val Width = optional[ExifBaseData, Int](_.width)
+  val Height = optional[ExifBaseData, Int](_.height)
   val DateTaken = optional[ExifBaseData, DateTime](_.dateTaken)
   val CameraModel = optional[ExifBaseData, String](_.cameraModel)
   val OriginalFileNames = manyFromManyEntries[IngestionData, String](_.originalFileName)

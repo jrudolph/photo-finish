@@ -63,6 +63,8 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
     Seq(
       "Hash" -> Html(fileInfo.hash.asHexString)
     ) ++
+      fromOptional("Width", Width)(d => Html(d.toString)) ++
+      fromOptional("Height", Height)(d => Html(d.toString)) ++
       fromOptional("Date Taken", DateTaken)(d => Html(d.toString)) ++
       fromOptional("Camera Model", CameraModel)(m => Html(m)) ++
       Seq(
