@@ -24,14 +24,9 @@ object MetadataStore {
   )
 
   def store[T](metadata: MetadataEntry[T], repoConfig: RepositoryConfig): Unit = {
-    /*
-     - Locate file
-     - If exists: append
-     - If not: create
-     */
     val fos = new FileOutputStream(repoConfig.metadataFile(metadata.header.forData), true)
     val out = new GZIPOutputStream(fos)
-    try storeTo(metadata, fos)
+    try storeTo(metadata, out)
     finally out.close()
   }
 
