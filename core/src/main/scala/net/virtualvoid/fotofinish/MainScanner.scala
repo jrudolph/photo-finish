@@ -20,18 +20,21 @@ object MainScanner extends App {
 
   def ingestDir(dir: File): immutable.Seq[FileInfo] = {
     println(s"Ingesting new files from $dir")
-    val infos = new Scanner(repoConfig, manager).scan(dir)
+    val is = new Scanner(repoConfig, manager).scan(dir)
+    // HACK:
+    // metadata access isn't safely concurrently accessible so make sure not to run analyses in parallel per repo file/hash
+    val infos = is.groupBy(_.hash.asHexString)
 
-    println("Updating basic metadata for ingested fotos")
-    infos.par.foreach(MetadataStore.updateMetadataFor(_, IngestionDataExtractor, repoConfig))
+    println("Updating basic metadata for ingested photos")
+    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadataFor(_, IngestionDataExtractor, repoConfig)))
 
-    println("Updating exif metadata for ingested fotos")
-    infos.par.foreach(MetadataStore.updateMetadataFor(_, ExifBaseDataExtractor, repoConfig))
+    println("Updating exif metadata for ingested photos")
+    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadataFor(_, ExifBaseDataExtractor, repoConfig)))
 
-    println("Updating all metadata for ingested fotos")
-    infos.par.foreach(MetadataStore.updateMetadata(_, repoConfig))
+    println("Updating all metadata for ingested photos")
+    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadata(_, repoConfig)))
 
-    infos
+    is
   }
   dirs.flatMap(ingestDir)
 
