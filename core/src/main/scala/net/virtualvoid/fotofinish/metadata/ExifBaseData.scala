@@ -13,6 +13,7 @@ import spray.json.JsValue
 import spray.json.JsonFormat
 
 import scala.reflect.ClassTag
+import scala.util.Try
 
 sealed trait Orientation
 object Orientation {
@@ -61,7 +62,8 @@ object ExifBaseDataExtractor extends MetadataExtractor {
         dirs.collectFirst {
           case dir if dir.containsTag(tag) => Option(tped(dir, tag))
         }.flatten
-    def dateEntry = entry((dir, tag) => DateTime(dir.getDate(tag).getTime))
+
+    def dateEntry = entry((dir, tag) => Try(DateTime(dir.getDate(tag).getTime)).toOption.orNull) // may fail if outside reasonable date range
     def intEntry = entry(_.getInt(_))
     def stringEntry = entry(_.getString(_))
 
@@ -70,10 +72,10 @@ object ExifBaseDataExtractor extends MetadataExtractor {
     val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
     val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
     val orientation = intEntry(ExifDirectoryBase.TAG_ORIENTATION).map {
-      case 1 => Orientation.Normal
-      case 3 => Orientation.Clockwise180
-      case 6 => Orientation.Clockwise270
-      case 8 => Orientation.Clockwise90
+      case 0 | 1 => Orientation.Normal
+      case 3     => Orientation.Clockwise180
+      case 6     => Orientation.Clockwise270
+      case 8     => Orientation.Clockwise90
     }
 
     ExifBaseData(width, height, date, model, orientation)
