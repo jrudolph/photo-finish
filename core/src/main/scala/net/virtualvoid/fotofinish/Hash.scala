@@ -14,12 +14,14 @@ sealed trait HashAlgorithm {
   def bitLength: Int
   def byteLength: Int
   def hexStringLength: Int
-  def createDigest(): MessageDigest
+  def apply(file: File): Hash
+
   protected def algorithm: String
 }
 object HashAlgorithm {
   val Sha512: HashAlgorithm = new Impl("SHA-512")
   val Algorithms = Vector(Sha512)
+  val StepSize = 65536
 
   def byName(name: String): Option[HashAlgorithm] =
     name match {
@@ -27,17 +29,34 @@ object HashAlgorithm {
       case _         => Algorithms.find(_.name == name)
     }
 
-  private class Impl(val algorithm: String) extends HashAlgorithm {
+  private class Impl(val algorithm: String) extends HashAlgorithm { hashAlgorithm =>
     require(!name.contains(":"))
 
     override def name: String = algorithm.toLowerCase
 
-    override def createDigest(): MessageDigest =
+    private def createDigest(): MessageDigest =
       MessageDigest.getInstance(algorithm)
 
-    val bitLength: Int = byteLength * 8
     val byteLength: Int = createDigest().getDigestLength
+    val bitLength: Int = byteLength * 8
     val hexStringLength: Int = byteLength * 2 // one hex char per 4 bits
+
+    def apply(file: File): Hash = {
+      val digest = createDigest()
+      val fis = new FileInputStream(file)
+      val buffer = new Array[Byte](StepSize)
+
+      @tailrec
+      def hashStep(): ByteString =
+        if (fis.available() > 0) {
+          val read = fis.read(buffer)
+          digest.update(buffer, 0, read)
+          hashStep()
+        } else ByteString(digest.digest())
+
+      val hashData = try hashStep() finally fis.close()
+      Hash(hashAlgorithm, hashData)
+    }
   }
 }
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
@@ -67,26 +86,5 @@ object Hash {
     //val data = ByteString(string.grouped(2).map(s => java.lang.Short.parseShort(s, 16).toByte).toVector: _*)
     val data = read(new Array[Byte](hashAlgorithm.byteLength), at = 0)
     Hash(hashAlgorithm, data)
-  }
-}
-
-object Hasher {
-  val StepSize = 65536
-
-  def hash(hashAlgorithm: HashAlgorithm, file: File): Hash = {
-    val digest = hashAlgorithm.createDigest()
-    val fis = new FileInputStream(file)
-    val buffer = new Array[Byte](StepSize)
-
-    @tailrec
-    def hashStep(): ByteString =
-      if (fis.available() > 0) {
-        val read = fis.read(buffer)
-        digest.update(buffer, 0, read)
-        hashStep()
-      } else ByteString(digest.digest())
-
-    val hashData = try hashStep() finally fis.close()
-    Hash(hashAlgorithm, hashData)
   }
 }

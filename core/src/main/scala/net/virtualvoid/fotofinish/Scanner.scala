@@ -30,7 +30,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
       println(s"Found hard link into repo for [$file] at [${byInode.get}]")
       byInode.get.copy(originalFile = file)
     } else {
-      val hash = Hasher.hash(hashAlgorithm, file)
+      val hash = hashAlgorithm(file)
       val inRepo = repoFile(hash)
       if (!inRepo.exists()) {
         println(s"Creating repo file for [$file] at [$inRepo] exists: ${inRepo.exists()}")
