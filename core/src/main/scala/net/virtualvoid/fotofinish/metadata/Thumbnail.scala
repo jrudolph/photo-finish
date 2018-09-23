@@ -28,7 +28,7 @@ object ThumbnailExtractor extends MetadataExtractor {
     import sys.process._
     val baos = new ByteArrayOutputStream
     val res = s"""convert ${file.repoFile.getCanonicalPath} -thumbnail 150 -quality 20 -auto-orient -""".#>(baos).!
-    require(res == 0)
+    require(res == 0, "convert didn't return successfully")
     val imageBytes = ByteString.fromArray(baos.toByteArray)
     // TODO: optimize memory usage
     val image = ImageIO.read(new ByteArrayInputStream(baos.toByteArray))
