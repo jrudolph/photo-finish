@@ -86,6 +86,14 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
               path("raw") {
                 getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
               },
+              path("oriented") {
+                complete {
+                  HttpEntity(
+                    MediaTypes.`image/jpeg`,
+                    ImageTools.correctOrientation(meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
+                  )
+                }
+              },
               path("thumbnail") {
                 complete {
                   meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
@@ -98,7 +106,7 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
                   meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
                     HttpEntity(
                       MediaTypes.`image/jpeg`,
-                      ImageTools.crop(fileInfo.repoFile, face.rectangle))
+                      ImageTools.crop(face.rectangle)(fileInfo.repoFile))
                   }
                 }
               },
