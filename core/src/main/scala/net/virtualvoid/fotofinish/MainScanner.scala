@@ -26,13 +26,13 @@ object MainScanner extends App {
     val infos = is.groupBy(_.hash.asHexString)
 
     println("Updating basic metadata for ingested photos")
-    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadataFor(_, IngestionDataExtractor, repoConfig)))
+    infos.par.foreach(i => i._2.foreach(metadataStore.updateMetadataFor(_, IngestionDataExtractor)))
 
     println("Updating exif metadata for ingested photos")
-    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadataFor(_, ExifBaseDataExtractor, repoConfig)))
+    infos.par.foreach(i => i._2.foreach(metadataStore.updateMetadataFor(_, ExifBaseDataExtractor)))
 
     println("Updating all metadata for ingested photos")
-    infos.par.foreach(i => i._2.foreach(MetadataStore.updateMetadata(_, repoConfig)))
+    infos.par.foreach(i => i._2.foreach(metadataStore.updateMetadata))
 
     is
   }
@@ -40,7 +40,7 @@ object MainScanner extends App {
 
   println("Updating remaining metadata")
   manager.allRepoFiles().toStream.par
-    .foreach(MetadataStore.updateMetadata(_, repoConfig))
+    .foreach(metadataStore.updateMetadata)
 
   println("Updating by-date folder")
   Relinker.createDirStructure(manager)(Relinker.byYearMonth(manager))

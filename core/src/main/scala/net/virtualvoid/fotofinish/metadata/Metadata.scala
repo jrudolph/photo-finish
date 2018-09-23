@@ -64,7 +64,7 @@ trait MetadataExtractor { thisExtractor =>
   def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[EntryT]]): Boolean = true
 
   // TODO: support streaming metadata extraction?
-  def extractMetadata(file: FileInfo): Option[MetadataEntry[EntryT]] =
+  def extractMetadata(file: FileInfo): Try[MetadataEntry[EntryT]] =
     Try {
       MetadataEntry[EntryT](
         MetadataHeader(
@@ -76,7 +76,7 @@ trait MetadataExtractor { thisExtractor =>
         this,
         extract(file)
       )
-    }.toOption
+    }
 
   protected def extract(file: FileInfo): EntryT
 
