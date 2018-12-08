@@ -6,6 +6,7 @@ import net.virtualvoid.fotofinish.metadata.MetadataExtractor
 
 final case class RepositoryConfig(
     storageDir:    File,
+    linkRootDir:   File,
     hashAlgorithm: HashAlgorithm
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")

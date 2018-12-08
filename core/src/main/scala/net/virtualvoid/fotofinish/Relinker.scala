@@ -13,7 +13,7 @@ import metadata._
 
 object Relinker {
   def byOriginalFileName(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
-    val parentDir = new File(manager.config.storageDir, "by-original-name")
+    val parentDir = new File(manager.config.linkRootDir, "by-original-name")
 
     MetadataShortcuts.OriginalFullFilePaths(fileAndMetadata.metadata)
       .map { p =>
@@ -30,7 +30,7 @@ object Relinker {
         case None       => "unknown"
         case Some(date) => f"${date.year}%04d/${date.month}%02d"
       }
-      val subDir = new File(manager.config.storageDir, "by-date")
+      val subDir = new File(manager.config.linkRootDir, "by-date")
       val res = new File(subDir, sub)
       res.mkdirs()
       res
