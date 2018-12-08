@@ -68,7 +68,7 @@ class MetadataStore(repoConfig: RepositoryConfig) {
   private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata): Option[MetadataEntry[_]] = {
     val exInfos = existing.getEntries(extractor.classTag)
     if (exInfos.isEmpty || !extractor.isCurrent(target, exInfos)) {
-      println(s"Metadata [${extractor.kind}] missing or not current for [${target.repoFile}], rerunning analysis...")
+      println(s"Metadata [${extractor.kind}] missing (${exInfos.isEmpty}) or not current (${!extractor.isCurrent(target, exInfos)}) for [${target.repoFile}], rerunning analysis...")
       extractor.extractMetadata(target) match {
         case Success(entry) =>
           store(entry)

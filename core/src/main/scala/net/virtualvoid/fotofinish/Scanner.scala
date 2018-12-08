@@ -28,7 +28,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
     val byInode = manager.inodeMap.get((ufi.dev, ufi.inode))
     if (byInode.isDefined) {
       println(s"Found hard link into repo for [$file] at [${byInode.get}]")
-      byInode.get.copy(originalFile = file)
+      byInode.get.copy(originalFile = Some(file))
     } else {
       val hash = hashAlgorithm(file)
       val inRepo = repoFile(hash)
@@ -46,7 +46,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
         // TODO: create hard-link instead?
       }
 
-      FileInfo(hash, inRepo, metadataFile(hash), file)
+      FileInfo(hash, inRepo, metadataFile(hash), Some(file))
     }
   }
 }

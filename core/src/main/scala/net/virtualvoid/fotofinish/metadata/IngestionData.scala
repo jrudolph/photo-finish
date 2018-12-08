@@ -27,19 +27,21 @@ object IngestionDataExtractor extends MetadataExtractor {
   override def version: Int = 2
   override def classTag: ClassTag[IngestionData] = implicitly[ClassTag[IngestionData]]
 
-  override protected def extract(file: FileInfo): IngestionData =
+  override protected def extract(file: FileInfo): IngestionData = {
+    val original = file.originalFile.getOrElse(throw new RuntimeException("Cannot extract IngestionData when original file info is not available"))
     IngestionData(
-      file.originalFile.length(),
-      file.originalFile.getName,
-      file.originalFile.getParent,
-      DateTime(Files.readAttributes(file.originalFile.toPath, classOf[BasicFileAttributes]).creationTime().toMillis),
-      DateTime(file.originalFile.lastModified()),
+      original.length(),
+      original.getName,
+      original.getParent,
+      DateTime(Files.readAttributes(original.toPath, classOf[BasicFileAttributes]).creationTime().toMillis),
+      DateTime(original.lastModified()),
       DateTime(file.repoFile.lastModified())
     )
+  }
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.dateTimeFormat
   override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 
   override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
-    entries.exists(_.data.originalFileName == file.originalFile.getName)
+    file.originalFile.forall(original => entries.exists(e => original.getName == e.data.originalFileName))
 }

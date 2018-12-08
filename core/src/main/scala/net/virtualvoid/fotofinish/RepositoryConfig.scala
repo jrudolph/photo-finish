@@ -27,7 +27,7 @@ final case class RepositoryConfig(
       hash,
       repoFile(hash),
       metadataFile(hash),
-      repoFile(hash)
+      None
     )
 
   def fileInfoByHashPrefix(prefix: String, hashAlgorithm: HashAlgorithm = hashAlgorithm): Option[FileInfo] = {
