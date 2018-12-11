@@ -39,7 +39,13 @@ object MetadataStore {
     import MetadataJsonProtocol._
     val jsonValue = entry.parseJson
     val header = jsonValue.convertTo[MetadataHeader]
-    findExtractor(header).map(_.get(jsonValue))
+    val extractor = findExtractor(header)
+    extractor
+      .flatMap[MetadataEntry[_]] { e =>
+        val entry = e.get(jsonValue)
+
+        Some(entry).filter(e.isCorrect)
+      }
   }.recover {
     case e =>
       println(s"Couldn't read metadata entry [$entry] because of [${e.getMessage}]")

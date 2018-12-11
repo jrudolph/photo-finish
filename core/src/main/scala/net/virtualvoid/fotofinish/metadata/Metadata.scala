@@ -63,6 +63,13 @@ trait MetadataExtractor { thisExtractor =>
   /** Override to check allow new entries created for the same version */
   def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[EntryT]]): Boolean = true
 
+  /**
+   * Determines if an entry is correct or should be filtered out.
+   *
+   * Override to filter out entries that might have been accidentally or wrongly created.
+   */
+  def isCorrect(entry: MetadataEntry[EntryT]): Boolean = true
+
   // TODO: support streaming metadata extraction?
   def extractMetadata(file: FileInfo): Try[MetadataEntry[EntryT]] =
     Try {
