@@ -119,7 +119,7 @@ object ClusterTest extends App {
   faceDir.mkdirs()
 
   result.toSeq
-    .filter(_.size > 2)
+    // uncomment to remove single images .filter(_.size > 2)
     .sortBy(_.size).zipWithIndex.foreach {
       case (cluster, idx) =>
         println()
