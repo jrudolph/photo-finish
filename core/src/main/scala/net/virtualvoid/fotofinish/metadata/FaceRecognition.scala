@@ -16,7 +16,7 @@ object FaceRecognition {
       FaceRecognitionLib.detect_faces(
         imgFileName,
         faces(0),
-        faces.size,
+        faces.length,
         numJitters)
 
     if (numRes == -1)
