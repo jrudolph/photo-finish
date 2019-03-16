@@ -54,38 +54,45 @@ object Relinker {
     new File(dir, fileName) :: Nil
   }
   def createDirStructure(manager: RepositoryManager)(locator: FileAndMetadata => immutable.Seq[File]): Unit = {
-    manager.allFiles()
+    manager.allRepoFiles()
       .zipWithIndex
-      .foreach {
-        case (f, idx) =>
-          if ((idx % 1000) == 0) println(s"At $idx")
+      .grouped(1000)
+      .foreach { group =>
+        group.toVector.par
+          .map {
+            case (fileInfo, i) => FileAndMetadata(fileInfo, MetadataStore.load(fileInfo)) -> i
+          }
+          .foreach {
+            case (f, idx) =>
+              if ((idx % 1000) == 0) println(s"At $idx")
 
-          val repoPath = f.fileInfo.repoFile.toPath
-          locator(f).foreach(createLink)
+              val repoPath = f.fileInfo.repoFile.toPath
+              locator(f).foreach(createLink)
 
-          def createLink(targetFile: File): Unit = {
+              def createLink(targetFile: File): Unit = {
 
-            val fileName = targetFile.getName
-            val dir = targetFile.getParent
-            targetFile.getParentFile.mkdirs()
+                val fileName = targetFile.getName
+                val dir = targetFile.getParent
+                targetFile.getParentFile.mkdirs()
 
-            def linkTarget(i: Int): Unit = {
-              val targetPath =
-                if (i == 0) targetFile.toPath
-                else new File(dir, s"${fileName}_${i}").toPath
+                def linkTarget(i: Int): Unit = {
+                  val targetPath =
+                    if (i == 0) targetFile.toPath
+                    else new File(dir, s"${fileName}_${i}").toPath
 
-              if (Files.exists(targetPath))
-                if (targetPath.toRealPath() == repoPath.toRealPath())
-                  () // link already there
-                else {
-                  println(s"File already exists in dir at [$targetPath] but is no link to [${repoPath.toRealPath()}] but to [${targetPath.toRealPath()}]")
-                  linkTarget(i + 1)
+                  if (Files.exists(targetPath))
+                    if (targetPath.toRealPath() == repoPath.toRealPath())
+                      () // link already there
+                    else {
+                      println(s"File already exists in dir at [$targetPath] but is no link to [${repoPath.toRealPath()}] but to [${targetPath.toRealPath()}]")
+                      linkTarget(i + 1)
+                    }
+                  else
+                    Files.createSymbolicLink(targetPath, repoPath)
                 }
-              else
-                Files.createSymbolicLink(targetPath, repoPath)
-            }
 
-            linkTarget(0)
+                linkTarget(0)
+              }
           }
       }
   }
