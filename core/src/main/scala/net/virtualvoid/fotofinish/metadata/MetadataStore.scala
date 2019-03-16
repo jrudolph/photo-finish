@@ -56,6 +56,13 @@ object MetadataStore {
     RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)
 }
 
+sealed trait MetadataStatus
+object MetadataStatus {
+  case object Missing extends MetadataStatus
+  final case class ExistingAndCurrent(metadataEntries: immutable.Seq[MetadataEntry[_]]) extends MetadataStatus
+  final case class ExistingButOutdated(currentEntries: immutable.Seq[MetadataEntry[_]]) extends MetadataStatus
+}
+
 class MetadataStore(repoConfig: RepositoryConfig) {
   import MetadataStore._
 
@@ -66,6 +73,19 @@ class MetadataStore(repoConfig: RepositoryConfig) {
     val infos = load(target)
     RegisteredMetadataExtractors
       .flatMap(e => updateMetadataFor(target, e, infos).toVector)
+  }
+
+  def metadataStatus(target: FileInfo): Map[MetadataExtractor, MetadataStatus] = {
+    val infos = load(target)
+    RegisteredMetadataExtractors
+      .map { e =>
+        val es = infos.getEntries(e.classTag)
+        val status =
+          if (es.isEmpty) MetadataStatus.Missing
+          else if (e.isCurrent(target, es)) MetadataStatus.ExistingAndCurrent(es)
+          else MetadataStatus.ExistingButOutdated(es)
+        e -> status
+      }.toMap
   }
 
   def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor): Option[MetadataEntry[_]] =
