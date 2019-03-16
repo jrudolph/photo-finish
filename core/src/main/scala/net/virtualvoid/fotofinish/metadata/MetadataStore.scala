@@ -31,8 +31,15 @@ object MetadataStore {
     Metadata {
       if (!metadataFile.exists()) Nil
       else
-        Source.fromInputStream(new GZIPInputStream(new FileInputStream(metadataFile))).getLines()
+        try Source.fromInputStream(new GZIPInputStream(new FileInputStream(metadataFile))).getLines()
           .flatMap(readMetadataEntry).toVector
+        catch {
+          case NonFatal(ex) =>
+            println(s"${Console.RED}Metadata file ${metadataFile.getAbsolutePath} broken (${ex.getMessage})${Console.RESET}")
+            metadataFile.renameTo(new File(metadataFile.getParentFile, metadataFile.getName + ".bak"))
+            Nil
+          //throw ex
+        }
     }
 
   def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = Try {
