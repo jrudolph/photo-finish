@@ -4,9 +4,12 @@ import java.io.File
 import java.io.FileFilter
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributes
 
 import scala.collection.immutable
+import scala.Console._
 
 class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
   import Scanner._
@@ -33,7 +36,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
       val hash = hashAlgorithm(file)
       val inRepo = repoFile(hash)
       if (!inRepo.exists()) {
-        println(s"Creating repo file for [$file] at [$inRepo] exists: ${inRepo.exists()}")
+        println(s"${GREEN}Creating repo file$RESET for [$file] at [$inRepo] exists: ${inRepo.exists()}")
         Files.createDirectories(inRepo.getParentFile.toPath)
         if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath()))
           Files.createLink(inRepo.toPath, file.toPath)
@@ -42,8 +45,13 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
 
         inRepo.setWritable(false)
       } else {
-        println(s"Already in repo [$file] (as determined by hash)")
-        // TODO: create hard-link instead?
+        if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath())) {
+          println(s"Already in repo [$file] (as determined by hash), ${MAGENTA}replacing with link$RESET")
+          val tmpPath = Paths.get(file.getAbsolutePath + ".tmp")
+          Files.createLink(tmpPath, inRepo.toPath)
+          Files.move(tmpPath, file.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } else
+          println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET")
       }
 
       FileInfo(hash, inRepo, metadataFile(hash), Some(file))
