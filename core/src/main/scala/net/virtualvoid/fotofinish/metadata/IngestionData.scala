@@ -43,7 +43,12 @@ object IngestionDataExtractor extends MetadataExtractor {
   override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 
   override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
-    file.originalFile.forall(original => entries.exists(e => original.getName == e.data.originalFileName))
+    file.originalFile.forall { original =>
+      entries.exists(e =>
+        original.getName == e.data.originalFileName &&
+          original.getParent == e.data.originalFilePath
+      )
+    }
 
   override def isCorrect(entry: MetadataEntry[IngestionData]): Boolean =
     // the extractor previously accidentally ran against repo files so we use a simple heuristic here to be able to filter
