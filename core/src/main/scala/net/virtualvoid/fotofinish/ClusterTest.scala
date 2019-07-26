@@ -65,7 +65,7 @@ object ClusterTest extends App {
 
     var i = 0
     var sqDiff = 0f
-    while (i < a1.length) {
+    while (i < a1.length && sqDiff < Threshold) {
       val diff = a1(i) - a2(i)
       sqDiff += diff * diff
 
