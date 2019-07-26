@@ -19,7 +19,7 @@ TODO:
 
 object ClusterTest extends App {
   val Threshold = 0.2 // 0.6*0.6 ?
-  val NumFaces = 20000
+  val NumFaces = 25000
   val ShortHash = 20
 
   type FeatureVector = Array[Float]
@@ -31,11 +31,15 @@ object ClusterTest extends App {
       id.trim -> name.trim
     }.toSeq
 
-  println("Loading faces...")
-  val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =
-    MetadataStore.loadAllEntriesFrom(new File("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz"))
+  def loadFrom(file: String): immutable.Seq[MetadataEntry[FaceData]] =
+    MetadataStore.loadAllEntriesFrom(new File(file))
       .getEntries[FaceData]
       .filter(_.data.faces.nonEmpty)
+
+  println("Loading faces...")
+  val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =
+    Vector("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz", "/mnt/hd/fotos/tmp/repo/net.virtualvoid.fotofinish.FaceData-v3.json.gz")
+      .flatMap(loadFrom)
       .flatMap { e =>
         val fileInfo = Settings.manager.config.fileInfoOf(e.header.forData)
         e.data.faces.zipWithIndex.map {
@@ -110,7 +114,7 @@ object ClusterTest extends App {
       .seq
 
   val vertices: Set[VertexData] = edges.flatMap(e => e._1 :: e._2 :: Nil).toSet
-  println(s"Found ${edges.size} edges in ${vertices.size} vertices")
+  println(s"Found ${edges.size} edges between ${vertices.size} vertices")
   println("Now clustering")
   val graph = Graph(vertices, edges)
   val result = ChineseWhispers.cluster(graph, iterations = 20)
@@ -140,7 +144,8 @@ object ClusterTest extends App {
 
   println("Preparing results")
   result.toSeq
-    // uncomment to remove single images .filter(_.size > 2)
+    // uncomment to remove single images
+    .filter(_.size > 3)
     .sortBy(_.size).zipWithIndex.foreach {
       case (cluster, idx) =>
         println()
