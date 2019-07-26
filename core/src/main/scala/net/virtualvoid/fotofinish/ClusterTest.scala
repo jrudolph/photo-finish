@@ -118,6 +118,27 @@ object ClusterTest extends App {
   val faceDir = new File("/tmp/clusterfaces/")
   faceDir.mkdirs()
 
+  println("Calculating uncanny reappearances")
+  val uncannyReappearances =
+    result.toSeq
+      .sortBy(_.size)
+      .foreach { set =>
+        val withDates =
+          set.flatMap { vd =>
+            val meta = Settings.manager.metadataFor(Hash.fromString(HashAlgorithm.Sha512, vd.repoFile.getName))
+            MetadataShortcuts.DateTaken(meta).map(dt => vd -> dt)
+          }
+
+        if (withDates.size > 1) {
+          val min = withDates.minBy(_._2)
+          val max = withDates.maxBy(_._2)
+
+          if ((max._2.clicks - min._2.clicks) > 1000L * 3600 * 24 * 365 * 5)
+            println(s"Person reappeared after long time ${min._1.shortId} ${max._1.shortId} ${min._2} ${max._2} total ${set.size}")
+        }
+      }
+
+  println("Preparing results")
   result.toSeq
     // uncomment to remove single images .filter(_.size > 2)
     .sortBy(_.size).zipWithIndex.foreach {
