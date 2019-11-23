@@ -10,7 +10,6 @@ import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.server.PathMatcher
 import akka.http.scaladsl.server.PathMatcher1
 import akka.http.scaladsl.server.Route
-import akka.stream.ActorMaterializer
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.util.ImageTools
 import net.virtualvoid.fotofinish.web.html.ImageInfo
@@ -18,7 +17,6 @@ import play.twirl.api.Html
 
 object Server extends App {
   implicit val system = ActorSystem()
-  implicit val mat = ActorMaterializer()
   import system.dispatcher
 
   val binding = Http().bindAndHandle(

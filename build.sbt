@@ -1,8 +1,8 @@
-val scalaV = "2.12.6"
-val akkaV = "2.5.16"
-val akkaHttpV = "10.1.5"
+val scalaV = "2.12.10"
+val akkaV = "2.6.0"
+val akkaHttpV = "10.1.10"
 
-val specs2V = "4.3.2"
+val specs2V = "4.8.0"
 
 lazy val root: Project = Project("root", file("."))
   .aggregate(core, web, docs)
@@ -13,7 +13,7 @@ lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "io.spray" %% "spray-json" % "1.3.4",
+      "io.spray" %% "spray-json" % "1.3.5",
       "com.drewnoakes" % "metadata-extractor" % "2.11.0",
       "net.java.dev.jna" % "jna" % "4.5.2",
 
