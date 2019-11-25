@@ -10,10 +10,12 @@ import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.server.PathMatcher
 import akka.http.scaladsl.server.PathMatcher1
 import akka.http.scaladsl.server.Route
-import net.virtualvoid.fotofinish.metadata._
-import net.virtualvoid.fotofinish.util.ImageTools
-import net.virtualvoid.fotofinish.web.html.ImageInfo
+
 import play.twirl.api.Html
+
+import util.ImageTools
+import html._
+import metadata._
 
 object Server extends App {
   implicit val system = ActorSystem()
@@ -38,39 +40,11 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
   import akka.http.scaladsl.server.Directives._
 
   lazy val main: Route =
-    pathPrefix("images")(images)
-
-  val HashPrefix = PathMatcher(s"[0-9a-fA-F]{2,${HashAlgorithm.Sha512.hexStringLength - 1}}".r)
-
-  val FileInfoBySha512Hash: PathMatcher1[FileInfo] =
-    PathMatcher(s"[0-9a-fA-F]{${HashAlgorithm.Sha512.hexStringLength}}".r).map { hash =>
-      manager.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
-    }
-
-  def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
-    //def from[T](name: String, shortcut: MetadataShortcuts.ShortCut[T])(display: T => Html):
-    def fromOptional[T](name: String, shortcut: MetadataShortcuts.ShortCut[Option[T]])(display: T => Html): Seq[(String, Html)] =
-      metadata.get(shortcut).map { t => name -> display(t) }.toSeq
-
-    val ingestion = metadata.getValues[IngestionData]
-
-    def formatIngestionData(d: IngestionData): String =
-      s"Original Path: ${d.originalFullFilePath}"
-
-    import MetadataShortcuts._
-    Seq(
-      "Hash" -> Html(fileInfo.hash.asHexString)
-    ) ++
-      fromOptional("Width", Width)(d => Html(d.toString)) ++
-      fromOptional("Height", Height)(d => Html(d.toString)) ++
-      fromOptional("Orientation", Orientation)(o => Html(o.toString)) ++
-      fromOptional("Date Taken", DateTaken)(d => Html(d.toString)) ++
-      fromOptional("Camera Model", CameraModel)(m => Html(m)) ++
-      Seq(
-        "Thumbnail" -> Html("""<img src="thumbnail" />"""),
-        "Ingestion Data" -> Html(ingestion.map(formatIngestionData).mkString("<br/>"))
-      )
-  }
+    concat(
+      pathPrefix("images")(images),
+      pathPrefix("gallery")(gallery),
+      auxiliary,
+    )
 
   lazy val images: Route =
     concat(
@@ -130,4 +104,63 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
       }
     )
 
+  lazy val gallery: Route =
+    get {
+      complete(Gallery(manager.allRepoFiles().drop(1000).take(100).flatMap(imageDataForFileInfo).toVector))
+    }
+
+  lazy val auxiliary: Route =
+    getFromResourceDirectory("web")
+
+  val HashPrefix = PathMatcher(s"[0-9a-fA-F]{2,${HashAlgorithm.Sha512.hexStringLength - 1}}".r)
+
+  val FileInfoBySha512Hash: PathMatcher1[FileInfo] =
+    PathMatcher(s"[0-9a-fA-F]{${HashAlgorithm.Sha512.hexStringLength}}".r).map { hash =>
+      manager.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
+    }
+
+  def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
+    //def from[T](name: String, shortcut: MetadataShortcuts.ShortCut[T])(display: T => Html):
+    def fromOptional[T](name: String, shortcut: MetadataShortcuts.ShortCut[Option[T]])(display: T => Html): Seq[(String, Html)] =
+      metadata.get(shortcut).map { t => name -> display(t) }.toSeq
+
+    val ingestion = metadata.getValues[IngestionData]
+
+    def formatIngestionData(d: IngestionData): String =
+      s"Original Path: ${d.originalFullFilePath}"
+
+    import MetadataShortcuts._
+    Seq(
+      "Hash" -> Html(fileInfo.hash.asHexString)
+    ) ++
+      fromOptional("Width", Width)(d => Html(d.toString)) ++
+      fromOptional("Height", Height)(d => Html(d.toString)) ++
+      fromOptional("Orientation", Orientation)(o => Html(o.toString)) ++
+      fromOptional("Date Taken", DateTaken)(d => Html(d.toString)) ++
+      fromOptional("Camera Model", CameraModel)(m => Html(m)) ++
+      Seq(
+        "Thumbnail" -> Html("""<img src="thumbnail" />"""),
+        "Ingestion Data" -> Html(ingestion.map(formatIngestionData).mkString("<br/>"))
+      )
+  }
+
+  def imageDataForFileInfo(fi: FileInfo): Option[GalleriaImageData] = {
+    val imageBase = s"/images/sha512/${fi.hash.asHexString}/"
+
+    val meta = manager.metadataFor(fi.hash)
+    import MetadataShortcuts._
+
+    val description = s"${fi.hash.asHexString.take(10)} ${DateTaken(meta).getOrElse("")} ${CameraModel(meta).getOrElse("")}"
+
+    Thumbnail(meta).map { _ =>
+      GalleriaImageData(imageBase + "oriented", imageBase + "thumbnail", imageBase, description)
+    }
+  }
+}
+
+case class GalleriaImageData(image: String, thumb: String, link: String, description: String)
+object GalleriaImageData {
+  import spray.json._
+  import DefaultJsonProtocol._
+  implicit val imageDataFormat = jsonFormat4(GalleriaImageData.apply _)
 }

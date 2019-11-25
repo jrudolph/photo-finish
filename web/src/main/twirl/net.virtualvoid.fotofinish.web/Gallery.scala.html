@@ -1,0 +1,29 @@
+@import net.virtualvoid.fotofinish._
+@import spray.json._
+@import DefaultJsonProtocol._
+
+@(images: Seq[web.GalleriaImageData])
+
+<html>
+    <head>
+        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.js"></script>
+        <script src="/vendor/galleria-1.6.1/dist/galleria.min.js"></script>
+
+        <style>
+            .galleria{ width: 2000px; height: 1000px; background: #000 }
+        </style>
+    </head>
+    <body>
+        <div class="galleria">
+
+        </div>
+        <script>
+            (function() {
+                var data = @{Html(images.toJson.prettyPrint)}
+
+                Galleria.loadTheme('/vendor/galleria-1.6.1/dist/themes/twelve/galleria.twelve.min.js');
+                Galleria.run('.galleria', { dataSource: data });
+            }());
+        </script>
+    </body>
+</html>
