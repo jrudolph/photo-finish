@@ -2,16 +2,17 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.MetadataExtractor
+import net.virtualvoid.fotofinish.metadata.{ MetadataEntry, MetadataExtractor }
 
 final case class RepositoryConfig(
     storageDir:    File,
+    metadataDir:   File,
     linkRootDir:   File,
     hashAlgorithm: HashAlgorithm
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
-  val allMetadataFile: File = new File(storageDir, "metadata.json.gz")
-  def metadataCollectionFor(extractor: MetadataExtractor): File = new File(storageDir, s"${extractor.kind}-v${extractor.version}.json.gz")
+  val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
+  def metadataCollectionFor(extractor: MetadataExtractor): File = new File(metadataDir, s"${extractor.kind}-v${extractor.version}.json.gz")
 
   def repoFile(hash: Hash): File = {
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}"
@@ -40,4 +41,12 @@ final case class RepositoryConfig(
       .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
   }
 
+  def destinationsFor(entry: MetadataEntry[_]): Seq[File] =
+    metadataFile(entry.header.forData) +: centralDestinationsFor(entry)
+
+  def centralDestinationsFor(entry: MetadataEntry[_]): Seq[File] =
+    Seq(
+      allMetadataFile,
+      metadataCollectionFor(entry.extractor)
+    )
 }

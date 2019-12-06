@@ -87,4 +87,18 @@ object Hash {
     val data = read(new Array[Byte](hashAlgorithm.byteLength), at = 0)
     Hash(hashAlgorithm, data)
   }
+
+  implicit val byteStringOrdering: Ordering[ByteString] = (x: ByteString, y: ByteString) => {
+    val len = x.length min y.length
+
+    @tailrec def step(idx: Int): Int =
+      if (idx < len) {
+        val s = x(idx).compareTo(y(idx))
+        if (s == 0) step(idx + 1)
+        else s
+      } else x.length.compareTo(y.length)
+
+    step(0)
+  }
+  implicit val hashOrdering: Ordering[Hash] = Ordering.by[Hash, ByteString](_.data)
 }

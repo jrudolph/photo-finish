@@ -77,7 +77,7 @@ class MetadataStore(repoConfig: RepositoryConfig) {
       println(s"Metadata [${extractor.kind}] missing (${exInfos.isEmpty}) or not current (${!extractor.isCurrent(target, exInfos)}) for [${target.repoFile}], rerunning analysis...")
       extractor.extractMetadata(target) match {
         case Success(entry) =>
-          store(entry)
+          storeToDefaultDestinations(entry)
           Some(entry)
         case Failure(exception) =>
           println(s"Metadata extraction [${extractor.kind} failed for [${target.repoFile}] with ${exception.getMessage}")
@@ -86,7 +86,10 @@ class MetadataStore(repoConfig: RepositoryConfig) {
     } else None
   }
 
-  private def store[T](entry: MetadataEntry[T]): Unit = try {
+  private def storeToDefaultDestinations[T](entry: MetadataEntry[T]): Unit =
+    storeToDestinations(entry, repoConfig.destinationsFor(entry))
+
+  def storeToDestinations[T](entry: MetadataEntry[T], destinations: Seq[File]): Unit = try {
     val baos = new ByteArrayOutputStream()
     val out = new GZIPOutputStream(baos)
     out.write(entry.extractor.create(entry).compactPrint.getBytes("utf8"))
@@ -94,7 +97,7 @@ class MetadataStore(repoConfig: RepositoryConfig) {
     out.close()
     baos.close()
 
-    destinationsFor(entry).foreach { dest =>
+    destinations.foreach { dest =>
       atomicallyAppendTo(dest, baos.toByteArray)
     }
   } catch {
@@ -102,13 +105,6 @@ class MetadataStore(repoConfig: RepositoryConfig) {
       e.printStackTrace()
       throw e
   }
-
-  private def destinationsFor(entry: MetadataEntry[_]): Seq[File] =
-    Seq(
-      repoConfig.metadataFile(entry.header.forData),
-      repoConfig.allMetadataFile,
-      repoConfig.metadataCollectionFor(entry.extractor)
-    )
 
   private def atomicallyAppendTo(target: File, data: Array[Byte]): Unit = {
     // FIXME: this is not atomic
