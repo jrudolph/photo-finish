@@ -11,6 +11,7 @@ object RepositoryValidator extends App {
   //   * Hashes are correct (takes a long time)
   //   * All per-repo-file metadata can be read and is for the given file
   //   * Aggregated metadata files contain same info as per-repo-files
+  //   * Sequence numbers are consecutive
 
   def checkHash(info: FileInfo): Try[Unit] = Try {
     val actualHash = info.hash.hashAlgorithm(info.repoFile)
@@ -18,24 +19,44 @@ object RepositoryValidator extends App {
   }
   def checkMetadata(info: FileInfo): Try[Unit] = Try {
     val entries = MetadataStore.loadAllEntriesFrom(info.metadataFile)
-    require(entries.entries.forall(_.header.forData == info.hash), s"Metadata file [${info.metadataFile}] for [${info.hash.asHexString}] contains entries for other hashes")
+    require(
+      entries.entries.forall(_.header.forData == info.hash),
+      s"Metadata file [${info.metadataFile}] for [${info.hash.asHexString}] contains entries for other hashes")
   }
+
+  println("Scanning repository")
+  val map = Settings.manager.inodeMap
+
+  println("Sorting by inode")
+  val sorted = map.toVector.sortBy(_._1).map(_._2)
 
   runCheck("Per-file metadata", checkMetadata)
   runCheck("Validating file hashes", checkHash)
 
-  def runCheck(what: String, check: FileInfo => Try[Unit]): Unit =
-    Settings.manager.allRepoFiles()
+  def runCheck(what: String, check: FileInfo => Try[Unit]): Unit = {
+    println(s"Starting check [$what]")
+    sorted.toIterator
       .map(check)
       .map {
         val i = new AtomicInteger()
+        val started = System.nanoTime()
+        @volatile var startedBatchAt = started
+        val batch = 500
 
         r => {
           val at = i.incrementAndGet()
-          if ((at % 500) == 0) println(s"[$what] $at")
+          if ((at % batch) == 0) {
+            val now = System.nanoTime()
+            val millisPerElem = (now - started) / at / 1000000
+            val remainingSeconds = millisPerElem * (sorted.size - at) / 1000
+            println(f"[$what] $at%6d/${sorted.size}%6d ETA: ${remainingSeconds / 60}%02d:${remainingSeconds % 60}%02d")
+
+            startedBatchAt = now
+          }
           r
         }
       }
       .filter(_.isFailure)
       .foreach(println)
+  }
 }
