@@ -60,7 +60,7 @@ object Relinker {
       .foreach { group =>
         group.toVector.par
           .map {
-            case (fileInfo, i) => FileAndMetadata(fileInfo, MetadataStore.load(fileInfo)) -> i
+            case (fileInfo, i) => FileAndMetadata(fileInfo, MetadataManager.load(fileInfo)) -> i
           }
           .foreach {
             case (f, idx) =>

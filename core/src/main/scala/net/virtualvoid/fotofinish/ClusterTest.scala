@@ -32,7 +32,7 @@ object ClusterTest extends App {
     }.toSeq
 
   def loadFrom(file: String): immutable.Seq[MetadataEntry[FaceData]] =
-    MetadataStore.loadAllEntriesFrom(new File(file))
+    MetadataManager.loadAllEntriesFrom(new File(file))
       .getEntries[FaceData]
       .filter(_.data.faces.nonEmpty)
 

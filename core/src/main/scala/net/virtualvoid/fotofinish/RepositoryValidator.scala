@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish
 
 import java.util.concurrent.atomic.AtomicInteger
 
-import net.virtualvoid.fotofinish.metadata.MetadataStore
+import net.virtualvoid.fotofinish.metadata.MetadataManager
 
 import scala.util.Try
 
@@ -18,7 +18,7 @@ object RepositoryValidator extends App {
     require(actualHash == info.hash, s"${info.hash.hashAlgorithm.name} for [${info.repoFile}] was expected to be [${info.hash}] but was [$actualHash]")
   }
   def checkMetadata(info: FileInfo): Try[Unit] = Try {
-    val entries = MetadataStore.loadAllEntriesFrom(info.metadataFile)
+    val entries = MetadataManager.loadAllEntriesFrom(info.metadataFile)
     require(
       entries.entries.forall(_.header.forData == info.hash),
       s"Metadata file [${info.metadataFile}] for [${info.hash.asHexString}] contains entries for other hashes")

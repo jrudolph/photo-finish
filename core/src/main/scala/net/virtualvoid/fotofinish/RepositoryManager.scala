@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish
 
-import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, Metadata, MetadataEntry, MetadataStore }
+import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, Metadata, MetadataEntry, MetadataManager }
 
 final case class FileAndMetadata(fileInfo: FileInfo, metadata: Metadata)
 class RepositoryManager(val config: RepositoryConfig) {
@@ -8,7 +8,7 @@ class RepositoryManager(val config: RepositoryConfig) {
   import Scanner._
 
   def metadataFor(hash: Hash): Metadata =
-    MetadataStore.load(config.fileInfoOf(hash))
+    MetadataManager.load(config.fileInfoOf(hash))
 
   def scanAllRepoFiles(): Iterator[FileInfo] =
     Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
@@ -21,13 +21,13 @@ class RepositoryManager(val config: RepositoryConfig) {
   def allFiles(): Iterator[FileAndMetadata] =
     allRepoFiles()
       .map { fileInfo =>
-        FileAndMetadata(fileInfo, MetadataStore.load(fileInfo))
+        FileAndMetadata(fileInfo, MetadataManager.load(fileInfo))
       }
 
   lazy val ingestionEntries: Seq[MetadataEntry[IngestionData]] = {
     println("Loading all ingestion data...")
     val res =
-      MetadataStore.loadAllEntriesFrom(config.metadataCollectionFor(IngestionDataExtractor))
+      MetadataManager.loadAllEntriesFrom(config.metadataCollectionFor(IngestionDataExtractor))
         .entries.asInstanceOf[Seq[MetadataEntry[IngestionData]]]
     println("Done")
     res

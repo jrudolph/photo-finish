@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.MetadataStore
+import net.virtualvoid.fotofinish.metadata.MetadataManager
 
 object Settings {
   val repo = new File("/home/johannes/Fotos/tmp/repo")
@@ -16,5 +16,5 @@ object Settings {
       linkDir,
       HashAlgorithm.Sha512)
   val manager = new RepositoryManager(repoConfig)
-  val metadataStore = new MetadataStore(repoConfig)
+  val metadataStore = new MetadataManager(repoConfig)
 }

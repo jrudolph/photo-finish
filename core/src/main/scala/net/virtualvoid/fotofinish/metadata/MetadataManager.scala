@@ -17,7 +17,7 @@ import spray.json._
 
 import scala.util.control.NonFatal
 
-object MetadataStore {
+object MetadataManager {
   val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
     ExifBaseDataExtractor,
     IngestionDataExtractor,
@@ -56,8 +56,8 @@ object MetadataStore {
     RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)
 }
 
-class MetadataStore(repoConfig: RepositoryConfig) {
-  import MetadataStore._
+class MetadataManager(repoConfig: RepositoryConfig) {
+  import MetadataManager._
 
   /**
    * Reruns all known extractors when metadata is missing.

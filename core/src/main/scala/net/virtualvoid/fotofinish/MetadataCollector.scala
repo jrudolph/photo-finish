@@ -23,7 +23,7 @@ object MetadataCollector extends App {
         .flatMap { fi =>
           val idx = read.incrementAndGet()
           if (idx % 1000 == 0) println(s"$idx/${sorted.size}")
-          MetadataStore.loadAllEntriesFrom(fi.metadataFile).entries
+          MetadataManager.loadAllEntriesFrom(fi.metadataFile).entries
         }
         .seq
 
