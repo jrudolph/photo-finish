@@ -1,10 +1,10 @@
 val scalaV = "2.12.10"
-val akkaV = "2.6.0"
-val akkaHttpV = "10.1.10"
+val akkaV = "2.6.1"
+val akkaHttpV = "10.1.11"
 
 val specs2V = "4.8.0"
 
-lazy val root: Project = Project("root", file("."))
+lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
 
 val rootRef = ProjectRef(file("."), "root")
