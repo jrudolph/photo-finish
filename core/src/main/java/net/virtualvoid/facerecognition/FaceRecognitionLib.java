@@ -1,12 +1,6 @@
 package net.virtualvoid.facerecognition;
 
 import com.sun.jna.Native;
-import com.sun.jna.PointerType;
-import com.sun.jna.Structure;
-
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
 
 /**
  * struct face {
