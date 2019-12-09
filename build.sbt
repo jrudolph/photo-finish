@@ -17,7 +17,8 @@ lazy val core: Project = project
       "com.drewnoakes" % "metadata-extractor" % "2.11.0",
       "net.java.dev.jna" % "jna" % "4.5.2",
 
-      "com.typesafe.akka" %% "akka-actor" % akkaV, // for ByteString
+      "com.typesafe.akka" %% "akka-actor-typed" % akkaV,
+      "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
     ),
 

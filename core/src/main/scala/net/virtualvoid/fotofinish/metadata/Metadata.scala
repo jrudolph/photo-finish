@@ -16,7 +16,9 @@ final case class MetadataHeader(
     version: Int,
     forData: Hash,
     kind:    String
-)
+) {
+  def seqNr: Long = ???
+}
 
 trait MetadataEntry {
   type T
