@@ -15,6 +15,7 @@ object Settings {
       meta,
       linkDir,
       HashAlgorithm.Sha512)
+
   val manager = new RepositoryManager(config)
-  val metadataStore = new MetadataManager(config)
+  val metadataStore = new MetadataManager(manager)
 }

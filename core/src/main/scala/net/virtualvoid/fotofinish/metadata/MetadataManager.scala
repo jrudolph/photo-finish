@@ -54,20 +54,21 @@ object MetadataManager {
     RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)
 }
 
-class MetadataManager(repoConfig: RepositoryConfig) {
+class MetadataManager(manager: RepositoryManager) {
+  private def config: RepositoryConfig = manager.config
   import MetadataManager._
 
   /**
    * Reruns all known extractors when metadata is missing.
    */
   def updateMetadata(target: FileInfo): immutable.Seq[MetadataEntry[_]] = {
-    val infos = loadAllEntriesFrom(repoConfig.metadataFile(target.hash))
+    val infos = manager.metadataFor(target.hash)
     RegisteredMetadataExtractors
       .flatMap(e => updateMetadataFor(target, e, infos).toVector)
   }
 
   def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor): Option[MetadataEntry[_]] =
-    updateMetadataFor(target, extractor, loadAllEntriesFrom(repoConfig.metadataFile(target.hash)))
+    updateMetadataFor(target, extractor, manager.metadataFor(target.hash))
 
   private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata): Option[MetadataEntry[_]] = {
     val exInfos = existing.getEntries(extractor.classTag)
@@ -85,7 +86,7 @@ class MetadataManager(repoConfig: RepositoryConfig) {
   }
 
   private def storeToDefaultDestinations[T](entry: MetadataEntry[T]): Unit =
-    storeToDestinations(entry, repoConfig.destinationsFor(entry))
+    storeToDestinations(entry, config.destinationsFor(entry))
 
   def storeToDestinations[T](entry: MetadataEntry[T], destinations: Seq[File]): Unit = try {
     val baos = new ByteArrayOutputStream()
