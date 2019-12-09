@@ -18,11 +18,32 @@ final case class MetadataHeader(
     kind:    String
 )
 
-final case class MetadataEntry[T](
-    header:    MetadataHeader,
-    extractor: MetadataExtractor { type EntryT = T },
-    data:      T
-)
+trait MetadataEntry {
+  type T
+  def header: MetadataHeader
+  def extractor: MetadataExtractor.Aux[T]
+  def data: T
+}
+object MetadataEntry {
+  type Aux[_T] = MetadataEntry { type T = _T }
+
+  def apply[T](header: MetadataHeader, extractor: MetadataExtractor.Aux[T], data: T): Aux[T] =
+    EntryImpl(header, extractor, data)
+
+  def unapply[T: ClassTag](entry: MetadataEntry): Option[(MetadataHeader, MetadataExtractor.Aux[T], T)] =
+    entry match {
+      case EntryImpl(header, extractor, data: T) => Some((header, extractor.asInstanceOf[MetadataExtractor.Aux[T]], data))
+      case _                                     => None
+    }
+
+  private case class EntryImpl[_T](
+      header:    MetadataHeader,
+      extractor: MetadataExtractor.Aux[_T],
+      data:      _T
+  ) extends MetadataEntry {
+    type T = _T
+  }
+}
 
 object MetadataJsonProtocol {
   def error(message: String): Nothing =
@@ -61,17 +82,17 @@ trait MetadataExtractor { thisExtractor =>
   implicit def classTag: ClassTag[EntryT]
 
   /** Override to check allow new entries created for the same version */
-  def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[EntryT]]): Boolean = true
+  def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry.Aux[EntryT]]): Boolean = true
 
   /**
    * Determines if an entry is correct or should be filtered out.
    *
    * Override to filter out entries that might have been accidentally or wrongly created.
    */
-  def isCorrect(entry: MetadataEntry[EntryT]): Boolean = true
+  def isCorrect(entry: MetadataEntry.Aux[EntryT]): Boolean = true
 
   // TODO: support streaming metadata extraction?
-  def extractMetadata(file: FileInfo): Try[MetadataEntry[EntryT]] =
+  def extractMetadata(file: FileInfo): Try[MetadataEntry.Aux[EntryT]] =
     Try {
       MetadataEntry[EntryT](
         MetadataHeader(
@@ -91,31 +112,34 @@ trait MetadataExtractor { thisExtractor =>
 
   import MetadataJsonProtocol._
   import util.JsonExtra._
-  private implicit val entryFormat = new JsonFormat[MetadataEntry[EntryT]] {
-    override def read(json: JsValue): MetadataEntry[EntryT] = {
+  private implicit val entryFormat = new JsonFormat[MetadataEntry.Aux[EntryT]] {
+    override def read(json: JsValue): MetadataEntry.Aux[EntryT] = {
       val header = json.convertTo[MetadataHeader]
       require(header.kind == kind && header.version == version)
       val data = json.field("data").convertTo[EntryT]
       MetadataEntry[EntryT](header, thisExtractor, data)
     }
-    override def write(obj: MetadataEntry[EntryT]): JsValue =
+    override def write(obj: MetadataEntry.Aux[EntryT]): JsValue =
       obj.header.toJson + ("data" -> obj.data.toJson)
   }
 
-  def get(jsonData: JsValue): MetadataEntry[EntryT] =
-    jsonData.convertTo[MetadataEntry[EntryT]]
-  def create(entry: MetadataEntry[EntryT]): JsValue =
+  def get(jsonData: JsValue): MetadataEntry.Aux[EntryT] =
+    jsonData.convertTo[MetadataEntry.Aux[EntryT]]
+  def create(entry: MetadataEntry.Aux[EntryT]): JsValue =
     entry.toJson
 }
+object MetadataExtractor {
+  type Aux[T] = MetadataExtractor { type EntryT = T }
+}
 
-final case class Metadata(entries: immutable.Seq[MetadataEntry[_]]) {
-  def getEntry[E: ClassTag]: Option[MetadataEntry[E]] =
+final case class Metadata(entries: immutable.Seq[MetadataEntry]) {
+  def getEntry[E: ClassTag]: Option[MetadataEntry.Aux[E]] =
     entries.reverse.collectFirst {
-      case e @ MetadataEntry(_, _, data: E) => e.asInstanceOf[MetadataEntry[E]]
+      case e @ MetadataEntry(_, _, _: E) => e.asInstanceOf[MetadataEntry.Aux[E]]
     }
-  def getEntries[E: ClassTag]: immutable.Seq[MetadataEntry[E]] =
+  def getEntries[E: ClassTag]: immutable.Seq[MetadataEntry.Aux[E]] =
     entries.collect {
-      case e @ MetadataEntry(_, _, data: E) => e.asInstanceOf[MetadataEntry[E]]
+      case e @ MetadataEntry(_, _, _: E) => e.asInstanceOf[MetadataEntry.Aux[E]]
     }
   def getValues[E: ClassTag]: immutable.Seq[E] = getEntries[E].map(_.data)
 

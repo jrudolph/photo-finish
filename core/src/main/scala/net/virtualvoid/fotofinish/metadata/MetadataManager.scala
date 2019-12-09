@@ -33,13 +33,13 @@ object MetadataManager {
           .flatMap(readMetadataEntry).toVector
     }
 
-  def readMetadataEntry(entry: String): Option[MetadataEntry[_]] = Try {
+  def readMetadataEntry(entry: String): Option[MetadataEntry] = Try {
     import MetadataJsonProtocol._
     val jsonValue = entry.parseJson
     val header = jsonValue.convertTo[MetadataHeader]
     val extractor = findExtractor(header)
     extractor
-      .flatMap[MetadataEntry[_]] { e =>
+      .flatMap[MetadataEntry] { e =>
         val entry = e.get(jsonValue)
 
         Some(entry).filter(e.isCorrect)
@@ -61,16 +61,16 @@ class MetadataManager(manager: RepositoryManager) {
   /**
    * Reruns all known extractors when metadata is missing.
    */
-  def updateMetadata(target: FileInfo): immutable.Seq[MetadataEntry[_]] = {
+  def updateMetadata(target: FileInfo): immutable.Seq[MetadataEntry] = {
     val infos = manager.metadataFor(target.hash)
     RegisteredMetadataExtractors
       .flatMap(e => updateMetadataFor(target, e, infos).toVector)
   }
 
-  def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor): Option[MetadataEntry[_]] =
+  def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor): Option[MetadataEntry] =
     updateMetadataFor(target, extractor, manager.metadataFor(target.hash))
 
-  private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata): Option[MetadataEntry[_]] = {
+  private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata): Option[MetadataEntry] = {
     val exInfos = existing.getEntries(extractor.classTag)
     if (exInfos.isEmpty || !extractor.isCurrent(target, exInfos)) {
       println(s"Metadata [${extractor.kind}] missing (${exInfos.isEmpty}) or not current (${!extractor.isCurrent(target, exInfos)}) for [${target.repoFile}], rerunning analysis...")
@@ -85,10 +85,10 @@ class MetadataManager(manager: RepositoryManager) {
     } else None
   }
 
-  private def storeToDefaultDestinations[T](entry: MetadataEntry[T]): Unit =
+  private def storeToDefaultDestinations(entry: MetadataEntry): Unit =
     storeToDestinations(entry, config.destinationsFor(entry))
 
-  def storeToDestinations[T](entry: MetadataEntry[T], destinations: Seq[File]): Unit = try {
+  def storeToDestinations(entry: MetadataEntry, destinations: Seq[File]): Unit = try {
     val baos = new ByteArrayOutputStream()
     val out = new GZIPOutputStream(baos)
     out.write(entry.extractor.create(entry).compactPrint.getBytes("utf8"))

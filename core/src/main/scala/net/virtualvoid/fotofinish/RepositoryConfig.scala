@@ -40,10 +40,10 @@ final case class RepositoryConfig(
       .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
   }
 
-  def destinationsFor(entry: MetadataEntry[_]): Seq[File] =
+  def destinationsFor(entry: MetadataEntry): Seq[File] =
     metadataFile(entry.header.forData) +: centralDestinationsFor(entry)
 
-  def centralDestinationsFor(entry: MetadataEntry[_]): Seq[File] =
+  def centralDestinationsFor(entry: MetadataEntry): Seq[File] =
     Seq(
       allMetadataFile,
       metadataCollectionFor(entry.extractor)

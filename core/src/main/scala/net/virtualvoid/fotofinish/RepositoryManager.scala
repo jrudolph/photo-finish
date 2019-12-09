@@ -23,11 +23,11 @@ class RepositoryManager(val config: RepositoryConfig) {
         FileAndMetadata(fileInfo, metadataFor(fileInfo.hash))
       }
 
-  lazy val ingestionEntries: Seq[MetadataEntry[IngestionData]] = {
+  lazy val ingestionEntries: Seq[MetadataEntry.Aux[IngestionData]] = {
     println("Loading all ingestion data...")
     val res =
       MetadataManager.loadAllEntriesFrom(config.metadataCollectionFor(IngestionDataExtractor))
-        .entries.asInstanceOf[Seq[MetadataEntry[IngestionData]]]
+        .entries.asInstanceOf[Seq[MetadataEntry.Aux[IngestionData]]]
     println("Done")
     res
   }

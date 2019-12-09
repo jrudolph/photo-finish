@@ -42,7 +42,7 @@ object IngestionDataExtractor extends MetadataExtractor {
   import MetadataJsonProtocol.dateTimeFormat
   override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 
-  override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry[IngestionData]]): Boolean =
+  override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry.Aux[IngestionData]]): Boolean =
     file.originalFile.forall { original =>
       entries.exists(e =>
         original.getName == e.data.originalFileName &&
@@ -50,7 +50,7 @@ object IngestionDataExtractor extends MetadataExtractor {
       )
     }
 
-  override def isCorrect(entry: MetadataEntry[IngestionData]): Boolean =
+  override def isCorrect(entry: MetadataEntry.Aux[IngestionData]): Boolean =
     // the extractor previously accidentally ran against repo files so we use a simple heuristic here to be able to filter
     // out these entries
     !entry.data.originalFilePath.contains("/by-sha-512/")
