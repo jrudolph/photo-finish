@@ -27,7 +27,6 @@ final case class RepositoryConfig(
     FileInfo(
       hash,
       repoFile(hash),
-      metadataFile(hash),
       None
     )
 

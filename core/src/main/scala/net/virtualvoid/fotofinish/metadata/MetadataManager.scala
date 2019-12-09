@@ -25,8 +25,6 @@ object MetadataManager {
     FaceDataExtractor
   )
 
-  def load(target: FileInfo): Metadata = loadAllEntriesFrom(target.metadataFile)
-
   def loadAllEntriesFrom(metadataFile: File): Metadata =
     Metadata {
       if (!metadataFile.exists()) Nil
@@ -63,13 +61,13 @@ class MetadataManager(repoConfig: RepositoryConfig) {
    * Reruns all known extractors when metadata is missing.
    */
   def updateMetadata(target: FileInfo): immutable.Seq[MetadataEntry[_]] = {
-    val infos = load(target)
+    val infos = loadAllEntriesFrom(repoConfig.metadataFile(target.hash))
     RegisteredMetadataExtractors
       .flatMap(e => updateMetadataFor(target, e, infos).toVector)
   }
 
   def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor): Option[MetadataEntry[_]] =
-    updateMetadataFor(target, extractor, load(target))
+    updateMetadataFor(target, extractor, loadAllEntriesFrom(repoConfig.metadataFile(target.hash)))
 
   private def updateMetadataFor(target: FileInfo, extractor: MetadataExtractor, existing: Metadata): Option[MetadataEntry[_]] = {
     val exInfos = existing.getEntries(extractor.classTag)

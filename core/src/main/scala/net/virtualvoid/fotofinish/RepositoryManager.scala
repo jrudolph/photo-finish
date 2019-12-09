@@ -7,8 +7,7 @@ class RepositoryManager(val config: RepositoryConfig) {
   val FileNamePattern = """^[0-9a-f]{128}$""".r
   import Scanner._
 
-  def metadataFor(hash: Hash): Metadata =
-    MetadataManager.load(config.fileInfoOf(hash))
+  def metadataFor(hash: Hash): Metadata = MetadataManager.loadAllEntriesFrom(config.metadataFile(hash))
 
   def scanAllRepoFiles(): Iterator[FileInfo] =
     Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
@@ -21,7 +20,7 @@ class RepositoryManager(val config: RepositoryConfig) {
   def allFiles(): Iterator[FileAndMetadata] =
     allRepoFiles()
       .map { fileInfo =>
-        FileAndMetadata(fileInfo, MetadataManager.load(fileInfo))
+        FileAndMetadata(fileInfo, metadataFor(fileInfo.hash))
       }
 
   lazy val ingestionEntries: Seq[MetadataEntry[IngestionData]] = {

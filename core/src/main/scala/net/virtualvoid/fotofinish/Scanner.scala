@@ -54,7 +54,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
           println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET")
       }
 
-      FileInfo(hash, inRepo, metadataFile(hash), Some(file))
+      FileInfo(hash, inRepo, Some(file))
     }
   }
 }

@@ -9,12 +9,12 @@ object Settings {
   val meta = new File("/home/johannes/Fotos/tmp/repo/metadata")
   val linkDir = new File("/home/johannes/FotosSorted")
 
-  val repoConfig =
+  val config =
     RepositoryConfig(
       repo,
       meta,
       linkDir,
       HashAlgorithm.Sha512)
-  val manager = new RepositoryManager(repoConfig)
-  val metadataStore = new MetadataManager(repoConfig)
+  val manager = new RepositoryManager(config)
+  val metadataStore = new MetadataManager(config)
 }

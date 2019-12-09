@@ -18,10 +18,11 @@ object RepositoryValidator extends App {
     require(actualHash == info.hash, s"${info.hash.hashAlgorithm.name} for [${info.repoFile}] was expected to be [${info.hash}] but was [$actualHash]")
   }
   def checkMetadata(info: FileInfo): Try[Unit] = Try {
-    val entries = MetadataManager.loadAllEntriesFrom(info.metadataFile)
+    val metadataFile = Settings.config.metadataFile(info.hash)
+    val entries = MetadataManager.loadAllEntriesFrom(metadataFile)
     require(
       entries.entries.forall(_.header.forData == info.hash),
-      s"Metadata file [${info.metadataFile}] for [${info.hash.asHexString}] contains entries for other hashes")
+      s"Metadata file [$metadataFile] for [${info.hash.asHexString}] contains entries for other hashes")
   }
 
   println("Scanning repository")

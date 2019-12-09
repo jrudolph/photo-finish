@@ -20,7 +20,7 @@ object MainScanner extends App {
 
   def ingestDir(dir: File): immutable.Seq[FileInfo] = {
     println(s"Ingesting new files from $dir")
-    val is = new Scanner(repoConfig, manager).scan(dir)
+    val is = new Scanner(config, manager).scan(dir)
     // HACK:
     // metadata access isn't safely concurrently accessible so make sure not to run analyses in parallel per repo file/hash
     val infos = is.groupBy(_.hash.asHexString)

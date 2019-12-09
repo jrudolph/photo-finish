@@ -7,8 +7,10 @@ import metadata._
 /** An app that collects all metadata from the central storage and repackages it to the central metadata store */
 object MetadataCollector extends App {
   def loadAllMetadata(): Vector[MetadataEntry[_]] = {
+    import Settings._
+
     println("Scanning repository")
-    val map = Settings.manager.inodeMap
+    val map = manager.inodeMap
 
     println("Sorting by inode")
     val sorted = map.toVector.sortBy(_._1).map(_._2)
@@ -23,7 +25,7 @@ object MetadataCollector extends App {
         .flatMap { fi =>
           val idx = read.incrementAndGet()
           if (idx % 1000 == 0) println(s"$idx/${sorted.size}")
-          MetadataManager.loadAllEntriesFrom(fi.metadataFile).entries
+          MetadataManager.loadAllEntriesFrom(config.metadataFile(fi.hash)).entries
         }
         .seq
 
@@ -39,6 +41,6 @@ object MetadataCollector extends App {
     .foreach {
       case (e, idx) =>
         if (idx % 10000 == 0) println(s"$idx/${entries.size}")
-        Settings.metadataStore.storeToDestinations(e, Settings.repoConfig.centralDestinationsFor(e))
+        Settings.metadataStore.storeToDestinations(e, Settings.config.centralDestinationsFor(e))
     }
 }
