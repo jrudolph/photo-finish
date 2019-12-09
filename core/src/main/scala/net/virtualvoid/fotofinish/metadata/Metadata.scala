@@ -46,8 +46,7 @@ object MetadataEntry {
 }
 
 object MetadataJsonProtocol {
-  def error(message: String): Nothing =
-    throw new DeserializationException(message)
+  def error(message: String): Nothing = throw DeserializationException(message)
 
   import DefaultJsonProtocol._
   implicit val dateTimeFormat = new JsonFormat[DateTime] {
