@@ -12,6 +12,8 @@ import akka.http.scaladsl.model.DateTime
 import metadata._
 
 object Relinker {
+  private final case class FileAndMetadata(fileInfo: FileInfo, metadata: Metadata)
+
   def byOriginalFileName(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
     val parentDir = new File(manager.config.linkRootDir, "by-original-name")
 
