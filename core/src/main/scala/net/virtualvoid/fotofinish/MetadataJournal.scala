@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish
 
 import akka.actor.typed.scaladsl.{ Behaviors, StashBuffer }
-import akka.actor.typed.{ ActorRef, ActorSystem, Behavior }
+import akka.actor.typed.{ ActorRef, ActorSystem, Behavior, PostStop }
 import akka.stream.scaladsl.Source
 import akka.util.Timeout
 import net.virtualvoid.fotofinish.metadata.MetadataEntry
@@ -11,16 +11,15 @@ import scala.concurrent.Future
 import scala.util.{ Failure, Success, Try }
 
 trait MetadataStorageBackend {
-  def nextSequenceNumber: Long
-  def store(entry: MetadataEntry): Future[Unit]
+  def store(entry: MetadataEntry): Future[MetadataEntry]
   def close(): Unit
 
-  def stream(): Source[MetadataEntry, Any]
+  def stream(fromSeq: Long): Source[MetadataEntry, Any]
 }
 
 object MetadataJournal {
   sealed trait Command
-  final case class Store(entry: MetadataEntry)(replyTo: ActorRef[Stored]) extends Command
+  final case class Store(entry: MetadataEntry, replyTo: ActorRef[Stored]) extends Command
   final case class Stored(entry: MetadataEntry)
 
   final case class Replay(to: ActorRef[ReplayStream], fromSeq: Long = 0L) extends Command
@@ -30,11 +29,38 @@ object MetadataJournal {
   final case class JournalEvent(entry: MetadataEntry)
 
   private sealed trait InternalCommand extends Command
+  private final case class BackendStored(storageResult: Try[MetadataEntry], replyTo: ActorRef[Stored]) extends InternalCommand
 
   def journal(backend: MetadataStorageBackend): Behavior[Command] =
-    Behaviors.receive {
-      case (ctx, Store(entry))          => Behaviors.same
-      case (ctx, Subscribe(whom, from)) => Behaviors.same
+    Behaviors.setup { ctx =>
+      def withSubscribers(subs: Set[ActorRef[JournalEvent]]): Behavior[Command] =
+        Behaviors
+          .receiveMessage[Command] {
+            case Store(entry, replyTo) =>
+              ctx.pipeToSelf(backend.store(entry))(BackendStored(_, replyTo))
+              Behaviors.same
+
+            case BackendStored(Success(entry), replyTo) =>
+              replyTo ! Stored(entry)
+              val ev = JournalEvent(entry)
+              subs.foreach(_ ! ev)
+              Behaviors.same
+
+            case Replay(to, from) =>
+              to ! ReplayStream(backend.stream(from))
+              Behaviors.same
+
+            case Subscribe(whom, from) =>
+              // FIXME: don't ignore `from`
+              withSubscribers(subs + whom)
+          }
+          .receiveSignal {
+            case (_, PostStop) =>
+              backend.close()
+              Behaviors.same
+          }
+
+      withSubscribers(Set.empty)
     }
 }
 
@@ -45,6 +71,7 @@ object RepositoryAPI {
   def apply(journal: ActorRef[MetadataJournal.Command])(implicit system: ActorSystem[_]): RepositoryAPI = {
     sealed trait Command
     final case class GetAllObjects(replyTo: ActorRef[AllObjects]) extends Command
+    // providing a Source might allow a different implementation later on
     final case class AllObjects(objectsSource: Source[Hash, Any], lastSeqNr: Long)
 
     final case class GotReplay(stream: Source[MetadataEntry, Any]) extends Command
