@@ -5,9 +5,12 @@ import java.io.File
 import net.virtualvoid.fotofinish.metadata.MetadataManager
 
 object Settings {
-  val repo = new File("/home/johannes/Fotos/tmp/repo")
+  /*val repo = new File("/home/johannes/Fotos/tmp/repo")
   val meta = new File("/home/johannes/Fotos/tmp/repo/metadata")
-  val linkDir = new File("/home/johannes/FotosSorted")
+  val linkDir = new File("/home/johannes/FotosSorted")*/
+  val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
+  val meta = new File("/home/johannes/git/self/photo-finish/tmprepo/metadata")
+  val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")
 
   val config =
     RepositoryConfig(

@@ -85,7 +85,7 @@ class MetadataManager(manager: RepositoryManager) {
     } else None
   }
 
-  private def storeToDefaultDestinations(entry: MetadataEntry): Unit =
+  def storeToDefaultDestinations(entry: MetadataEntry): Unit =
     storeToDestinations(entry, config.destinationsFor(entry))
 
   def storeToDestinations(entry: MetadataEntry, destinations: Seq[File]): Unit = try {

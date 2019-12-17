@@ -15,9 +15,10 @@ final case class MetadataHeader(
     created: DateTime,
     version: Int,
     forData: Hash,
-    kind:    String
+    kind:    String,
+    seqNr:   Long     = -1
 ) {
-  def seqNr: Long = ???
+  def withSeqNr(newSeqNr: Long): MetadataHeader = copy(seqNr = newSeqNr)
 }
 
 trait MetadataEntry {
@@ -25,6 +26,8 @@ trait MetadataEntry {
   def header: MetadataHeader
   def extractor: MetadataExtractor.Aux[T]
   def data: T
+
+  def withSeqNr(newSeqNr: Long): MetadataEntry.Aux[T]
 }
 object MetadataEntry {
   type Aux[_T] = MetadataEntry { type T = _T }
@@ -44,6 +47,8 @@ object MetadataEntry {
       data:      _T
   ) extends MetadataEntry {
     type T = _T
+
+    override def withSeqNr(newSeqNr: Long): Aux[_T] = copy(header = header.withSeqNr(newSeqNr))
   }
 }
 
@@ -73,7 +78,7 @@ object MetadataJsonProtocol {
     }
     override def write(obj: Hash): JsValue = JsString(obj.toString)
   }
-  implicit val metadataHeaderFormat = jsonFormat4(MetadataHeader.apply _)
+  implicit val metadataHeaderFormat = jsonFormat5(MetadataHeader.apply _)
 }
 
 trait MetadataExtractor { thisExtractor =>
