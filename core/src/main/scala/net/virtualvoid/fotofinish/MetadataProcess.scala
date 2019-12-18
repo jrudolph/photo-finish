@@ -16,11 +16,17 @@ import scala.util.Try
 trait MetadataProcess {
   type S
   type Api
+
+  def id: String = getClass.getName
+  def version: Int
+
   def initialState: S
   def processEvent(state: S, event: MetadataEntry): S
   def sideEffects(state: S, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (S, Vector[SideEffect])
   def api(stateAccess: () => Future[S])(implicit ec: ExecutionContext): Api
 
+  def serialize(state: S): ByteString
+  def deserialize(bytes: ByteString): S
   // FIXME: add persistence
 }
 
@@ -132,12 +138,17 @@ object GetAllObjectsProcess extends MetadataProcess {
   type S = State
   type Api = () => Future[Set[Hash]]
 
+  def version: Int = 1
+
   def initialState: State = State(Set.empty)
   def processEvent(state: State, event: MetadataEntry): State =
     state.copy(knownHashes = state.knownHashes + event.header.forData)
   def sideEffects(state: State, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
   def api(stateAccess: () => Future[State])(implicit ec: ExecutionContext): () => Future[Set[Hash]] =
     () => stateAccess().map(_.knownHashes)
+
+  def serialize(state: State): ByteString = ???
+  def deserialize(bytes: ByteString): State = ???
 }
 
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
@@ -146,10 +157,21 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   case object Scheduled extends HashState
   case class Calculated(version: Int) extends HashState
 
-  override type S = Map[Hash, HashState]
-  override type Api = Unit
+  case class State(objectStates: Map[Hash, HashState]) {
+    def get(hash: Hash): Option[HashState] = objectStates.get(hash)
+    def set(hash: Hash, newState: HashState): State = mutateStates(_.updated(hash, newState))
 
-  override def initialState: S = Map.empty
+    def mutateStates(f: Map[Hash, HashState] => Map[Hash, HashState]): State =
+      copy(objectStates = f(objectStates))
+  }
+
+  type S = State
+  type Api = Unit
+
+  override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
+  def version: Int = 1
+
+  def initialState: S = State(Map.empty)
 
   override def processEvent(state: S, event: MetadataEntry): S = {
     val hash = event.header.forData
@@ -160,17 +182,17 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
           case _                              => Calculated(event.header.version)
         }
 
-      state.updated(hash, newState)
-    } else if (state.contains(hash)) state
-    else state.updated(hash, Known)
+      state.set(hash, newState)
+    } else if (state.objectStates.contains(hash)) state
+    else state.set(hash, Known)
   }
 
   override def sideEffects(state: S, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (S, Vector[SideEffect]) = {
-    val toSchedule = state.filter(_._2 == Known)
+    val toSchedule = state.objectStates.filter(_._2 == Known)
     if (toSchedule.isEmpty) (state, Vector.empty)
     else {
       (
-        state ++ toSchedule.mapValues(_ => Scheduled),
+        state.mutateStates(_ ++ toSchedule.mapValues(_ => Scheduled)),
         toSchedule.keys.toVector.map { hash => () =>
           Future {
             val res = extractor.extractMetadata(fileInfoFor(hash))
@@ -183,4 +205,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   }
 
   override def api(stateAccess: () => Future[S])(implicit ec: ExecutionContext): Unit = ()
+
+  def serialize(state: State): ByteString = ???
+  def deserialize(bytes: ByteString): State = ???
 }
