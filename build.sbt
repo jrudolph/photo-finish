@@ -2,7 +2,7 @@ val scalaV = "2.12.10"
 val akkaV = "2.6.1"
 val akkaHttpV = "10.1.11"
 
-val specs2V = "4.8.0"
+val scalaTestV = "3.1.0"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
@@ -83,7 +83,7 @@ lazy val basicSettings = Seq(
   ),
 
   libraryDependencies ++= Seq(
-    "org.specs2" %% "specs2-core" % specs2V % "test",
+    "org.scalatest" %% "scalatest" % scalaTestV % "test",
   ),
 
   fork in run := true,
