@@ -27,6 +27,7 @@ trait MetadataEntry {
   def extractor: MetadataExtractor.Aux[T]
   def data: T
 
+  def seqNr: Long = header.seqNr
   def withSeqNr(newSeqNr: Long): MetadataEntry.Aux[T]
 }
 object MetadataEntry {
@@ -72,12 +73,6 @@ object MetadataJsonProtocol {
     }
   }
 
-  implicit val hashFormat = new JsonFormat[Hash] {
-    override def read(json: JsValue): Hash = json match {
-      case JsString(data) => Hash.fromPrefixedString(data).getOrElse(error(s"Prefixed hash string could not be read [$data]"))
-    }
-    override def write(obj: Hash): JsValue = JsString(obj.toString)
-  }
   implicit val metadataHeaderFormat = jsonFormat5(MetadataHeader.apply _)
 }
 

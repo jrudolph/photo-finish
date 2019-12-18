@@ -101,4 +101,12 @@ object Hash {
     step(0)
   }
   implicit val hashOrdering: Ordering[Hash] = Ordering.by[Hash, ByteString](_.data)
+
+  import spray.json._
+  implicit val hashFormat = new JsonFormat[Hash] {
+    override def read(json: JsValue): Hash = json match {
+      case JsString(data) => Hash.fromPrefixedString(data).getOrElse(throw DeserializationException(s"Prefixed hash string could not be read [$data]"))
+    }
+    override def write(obj: Hash): JsValue = JsString(obj.toString)
+  }
 }

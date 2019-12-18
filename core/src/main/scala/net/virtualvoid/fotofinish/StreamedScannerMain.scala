@@ -5,16 +5,16 @@ import java.io.File
 import akka.actor.ActorSystem
 import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.{ Sink, Source }
-import net.virtualvoid.fotofinish.MetadataProcess.{ Metadata, StreamEntry }
-import net.virtualvoid.fotofinish.Settings.{ config, manager }
 import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, IngestionDataExtractor, MetadataEntry }
+
+import scala.concurrent.duration._
 
 object StreamedScannerMain extends App {
   implicit val system = ActorSystem()
   import system.dispatcher
 
   // setup main stream
-  val journal = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
+  val (killSwitch, journal) = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
 
   val queue =
     Source.queue[MetadataEntry](1000, OverflowStrategy.dropNew)
@@ -33,10 +33,17 @@ object StreamedScannerMain extends App {
     )
     .run()
 
+  system.registerOnTermination(killSwitch.shutdown())
+
   val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
   println(s"Ingesting new files from $dir")
-  val is = new Scanner(config, manager).scan(dir)
+  val is = new Scanner(Settings.config, Settings.manager).scan(dir)
   is
     .map(IngestionDataExtractor.extractMetadata(_).get)
     .foreach(queue.offer(_))
+
+  system.scheduler.scheduleOnce(5.seconds) {
+    killSwitch.shutdown()
+    system.terminate()
+  }
 }
