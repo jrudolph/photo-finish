@@ -97,6 +97,8 @@ object MetadataProcess {
             }
 
           case AllObjectsReplayed =>
+            println(s"[${p.id}] finished replaying")
+
             val (newState0, sideEffects0) = p.sideEffects(currentState, manager.config.fileInfoOf)
 
             // run all waiting executions
@@ -158,7 +160,7 @@ object MetadataProcess {
 
         val snapshot =
           deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
-        println("Initialized process")
+        println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
         var curHandler: Handler = skipOverSnapshot(snapshot.currentSeqNr, snapshot.state, Vector.empty)
 
         e => {
