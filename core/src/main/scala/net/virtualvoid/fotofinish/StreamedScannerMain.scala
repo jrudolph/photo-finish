@@ -3,14 +3,19 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.{Keep, MergeHub, Sink}
+import akka.stream.scaladsl.{ Keep, MergeHub, Sink }
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor
+import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
 
 import scala.concurrent.duration._
 
 object StreamedScannerMain extends App {
   val parallelism = 8
+  val autoExtractors: Vector[MetadataExtractor] = Vector(
+    ExifBaseDataExtractor,
+    FaceDataExtractor,
+    ThumbnailExtractor
+  )
 
   implicit val system = ActorSystem()
   import system.dispatcher
@@ -37,8 +42,8 @@ object StreamedScannerMain extends App {
       .to(executor)
       .run()
 
-  runProcess(new MetadataIsCurrentProcess(ExifBaseDataExtractor))
   val ingestor = runProcess(new IngestionController)
+  autoExtractors.foreach(e => runProcess(new MetadataIsCurrentProcess(e)))
 
   system.registerOnTermination(killSwitch.shutdown())
 
@@ -50,6 +55,6 @@ object StreamedScannerMain extends App {
   system.scheduler.scheduleOnce(5.seconds) {
     println("Shutting down...")
     killSwitch.shutdown()
-    system.terminate()
+    system.scheduler.scheduleOnce(1.seconds)(system.terminate())
   }
 }
