@@ -3,10 +3,9 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import akka.actor.ActorSystem
-import akka.stream.OverflowStrategy
-import akka.stream.scaladsl.{ Keep, MergeHub, Sink, Source }
+import akka.stream.scaladsl.{Keep, MergeHub, Sink}
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, IngestionDataExtractor, MetadataEntry }
+import net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor
 
 import scala.concurrent.duration._
 
@@ -49,6 +48,7 @@ object StreamedScannerMain extends App {
   is.foreach(ingestor)
 
   system.scheduler.scheduleOnce(5.seconds) {
+    println("Shutting down...")
     killSwitch.shutdown()
     system.terminate()
   }
