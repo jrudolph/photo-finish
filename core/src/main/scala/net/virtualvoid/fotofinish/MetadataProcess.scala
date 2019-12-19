@@ -1,5 +1,6 @@
 package net.virtualvoid.fotofinish
 
+import scala.language.implicitConversions
 import java.io.{ File, FileInputStream, FileOutputStream }
 import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
@@ -12,6 +13,7 @@ import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
 import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, MetadataEntry, MetadataExtractor, MetadataManager }
 import spray.json.JsonFormat
 
+import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, Future, Promise }
@@ -70,30 +72,48 @@ object MetadataProcess {
     Flow[StreamEntry]
       .mergeMat(injectApi)(Keep.right)
       .statefulMapConcat[SideEffect] { () =>
-        abstract class Handler {
-          def apply(e: StreamEntry): (immutable.Iterable[SideEffect], Handler)
+        case class Effect(sideEffects: immutable.Iterable[SideEffect], nextHandler: Handler, newSeqNr: Long, newState: p.S, runStreamEntry: StreamEntry = null) {
+          def schedule(newSideEffects: immutable.Iterable[SideEffect]): Effect = copy(sideEffects ++ newSideEffects)
+          def changeState(state: p.S): Effect = copy(newState = state)
+          def changeSeqNr(seqNr: Long): Effect = copy(newSeqNr = seqNr)
+          def changeHandler(handler: Handler): Effect = copy(nextHandler = handler)
+          def andRun(entry: StreamEntry): Effect = copy(runStreamEntry = entry)
         }
         val SameHandler: Handler = _ => ???
+        object Effect {
+          def empty: Effect = Effect(Vector.empty, SameHandler, -2, null.asInstanceOf[p.S])
+        }
+        implicit def effectMethods(e: Effect.type): Effect = Effect.empty
+        implicit def changeHandler(h: Handler): Effect = Effect.changeHandler(h)
+        abstract class Handler {
+          def apply(e: StreamEntry): Effect
+        }
+        var _curSeqNr: Long = -1
+        var _curState: p.S = null.asInstanceOf[p.S]
+        def currentSeqNr: Long = _curSeqNr
+        def currentState: p.S = _curState
 
-        def skipOverSnapshot(currentSeqNr: Long, currentState: p.S, waitingExecutions: Vector[Execute[p.S, _]]): Handler =
-          if (currentSeqNr == -1) replaying(currentSeqNr, currentState, waitingExecutions)
+        def skipOverSnapshot(waitingExecutions: Vector[Execute[p.S, _]]): Handler =
+          if (currentSeqNr == -1) replaying(waitingExecutions)
           else {
-            case Metadata(entry) if entry.seqNr == currentSeqNr => (Nil, replaying(currentSeqNr, currentState, waitingExecutions))
-            case _: Metadata                                    => (Nil, skipOverSnapshot(currentSeqNr, currentState, waitingExecutions))
-            case e: Execute[p.S, t]                             => (Nil, skipOverSnapshot(currentSeqNr, currentState, waitingExecutions :+ e))
-            case ShuttingDown                                   => (Nil, closing)
+            case Metadata(entry) if entry.seqNr == currentSeqNr => replaying(waitingExecutions)
+            case _: Metadata                                    => Effect.empty
+            case e: Execute[p.S, t]                             => Effect.changeHandler(skipOverSnapshot(waitingExecutions :+ e))
+            case ShuttingDown                                   => closing
           }
 
-        def replaying(currentSeqNr: Long, currentState: p.S, waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
+        def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
           case Metadata(e) =>
             if (e.seqNr == currentSeqNr + 1) {
               val newState = p.processEvent(currentState, e)
-              (Nil, replaying(e.seqNr, newState, waitingExecutions))
+              Effect
+                .changeSeqNr(e.seqNr)
+                .changeState(newState)
             } else if (e.seqNr < currentSeqNr + 1)
               throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
             else {
               println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              (Nil, replaying(e.seqNr, currentState, waitingExecutions))
+              Effect.changeSeqNr(e.seqNr)
             }
 
           case AllObjectsReplayed =>
@@ -108,44 +128,58 @@ object MetadataProcess {
               (nextState, lastEffects ++ nextEffects)
             }
 
-            (sideEffects, ignoreDuplicateSeqNrs(currentSeqNr, newState))
+            Effect
+              .changeHandler(ignoreDuplicateSeqNrs)
+              .changeState(newState)
+              .schedule(sideEffects)
 
-          case e: Execute[p.S, t] => (Nil, replaying(currentSeqNr, currentState, waitingExecutions :+ e))
+          case e: Execute[p.S, t] => replaying(waitingExecutions :+ e)
 
-          case ShuttingDown       => shutdown(currentSeqNr, currentState)
+          case ShuttingDown       => shutdown()
         }
-        def ignoreDuplicateSeqNrs(currentSeqNr: Long, currentState: p.S): Handler = {
-          case Metadata(e) if e.seqNr <= currentSeqNr => (Nil, ignoreDuplicateSeqNrs(currentSeqNr, currentState))
-          case m: Metadata                            => liveEvents(currentSeqNr, currentState)(m)
+        def ignoreDuplicateSeqNrs: Handler = {
+          case Metadata(e) if e.seqNr <= currentSeqNr =>
+            println(s"[${p.id}] at $currentSeqNr got ${e.seqNr}. Ignoring")
+            Effect.empty
+          case m: Metadata => Effect.changeHandler(liveEvents).andRun(m)
 
           case e: Execute[p.S, t] =>
             val (sideEffects, newState) = execute(e, currentState)
-            (sideEffects, ignoreDuplicateSeqNrs(currentSeqNr, newState))
+            Effect
+              .changeState(newState)
+              .schedule(sideEffects)
 
-          case ShuttingDown => shutdown(currentSeqNr, currentState)
+          case ShuttingDown => shutdown()
         }
-        def liveEvents(currentSeqNr: Long, currentState: p.S): Handler = {
+        def liveEvents: Handler = {
           case Metadata(e) =>
             if (e.seqNr == currentSeqNr + 1) {
               val newState0 = p.processEvent(currentState, e)
               val (newState1, sideEffects) = p.sideEffects(newState0, manager.config.fileInfoOf)
-              (sideEffects, liveEvents(e.seqNr, newState1))
+              Effect
+                .changeSeqNr(e.seqNr)
+                .changeState(newState1)
+                .schedule(sideEffects)
             } else if (e.seqNr < currentSeqNr + 1)
               throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
             else {
               println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              (Nil, liveEvents(e.seqNr, currentState))
+              Effect
+                .changeSeqNr(e.seqNr)
             }
           case e: Execute[p.S, t] =>
             val (sideEffects, newState) = execute(e, currentState)
-            (sideEffects, liveEvents(currentSeqNr, newState))
+            Effect
+              .changeState(newState)
+              .schedule(sideEffects)
 
-          case ShuttingDown => shutdown(currentSeqNr, currentState)
+          case ShuttingDown => shutdown()
         }
-        def shutdown(currentSeqNr: Long, currentState: p.S): (immutable.Iterable[SideEffect], Handler) = {
+        def shutdown(): Effect = {
           serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
-          (Nil, closing)
+          closing
         }
+        // FIXME: try to use Effect here as well (complicated because then we need to be able to stack effects
         def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
           Try(e.f(currentState)) match {
             case Success((newState, sideEffects, res)) =>
@@ -156,17 +190,27 @@ object MetadataProcess {
               (Nil, currentState)
           }
 
-        lazy val closing: Handler = _ => (Nil, closing)
+        lazy val closing: Handler = _ => changeHandler(SameHandler)
 
         val snapshot =
           deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
         println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
-        var curHandler: Handler = skipOverSnapshot(snapshot.currentSeqNr, snapshot.state, Vector.empty)
+        _curSeqNr = snapshot.currentSeqNr
+        _curState = snapshot.state
+        var curHandler: Handler = skipOverSnapshot(Vector.empty)
 
         e => {
-          val (els, newHandler) = curHandler(e)
-          if (newHandler ne SameHandler) curHandler = newHandler
-          els
+          @tailrec def run(sideEffects: Vector[SideEffect]): Vector[SideEffect] = {
+            val Effect(els, newHandler, newSeqNr, newState, runStreamEntry) = curHandler(e)
+            if (newHandler ne SameHandler) curHandler = newHandler
+            if (newSeqNr != -2) _curSeqNr = newSeqNr
+            if (newState != null) _curState = newState
+
+            val newSideEffects = sideEffects ++ els
+            if (runStreamEntry ne null) run(newSideEffects)
+            else newSideEffects
+          }
+          run(Vector.empty)
         }
       }
       .recoverWithRetries(1, {
