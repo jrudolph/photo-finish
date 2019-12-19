@@ -75,32 +75,40 @@ object MetadataProcess {
         }
         val SameHandler: Handler = _ => ???
 
-        def skipOverSnapshot(currentSeqNr: Long, currentState: p.S): Handler =
-          if (currentSeqNr == -1) replaying(currentSeqNr, currentState)
+        def skipOverSnapshot(currentSeqNr: Long, currentState: p.S, waitingExecutions: Vector[Execute[p.S, _]]): Handler =
+          if (currentSeqNr == -1) replaying(currentSeqNr, currentState, waitingExecutions)
           else {
-            case Metadata(entry) if entry.seqNr == currentSeqNr => (Nil, replaying(currentSeqNr, currentState))
-            case _: Metadata                                    => (Nil, skipOverSnapshot(currentSeqNr, currentState))
-            case e: Execute[p.S, t]                             => execute(e.f, e.promise, currentState, skipOverSnapshot(currentSeqNr, _))
+            case Metadata(entry) if entry.seqNr == currentSeqNr => (Nil, replaying(currentSeqNr, currentState, waitingExecutions))
+            case _: Metadata                                    => (Nil, skipOverSnapshot(currentSeqNr, currentState, waitingExecutions))
+            case e: Execute[p.S, t]                             => (Nil, skipOverSnapshot(currentSeqNr, currentState, waitingExecutions :+ e))
             case ShuttingDown                                   => (Nil, closing)
           }
 
-        def replaying(currentSeqNr: Long, currentState: p.S): Handler = {
+        def replaying(currentSeqNr: Long, currentState: p.S, waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
           case Metadata(e) =>
             if (e.seqNr == currentSeqNr + 1) {
               val newState = p.processEvent(currentState, e)
-              (Nil, replaying(e.seqNr, newState))
+              (Nil, replaying(e.seqNr, newState, waitingExecutions))
             } else if (e.seqNr < currentSeqNr + 1)
               throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
             else {
               println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              (Nil, replaying(e.seqNr, currentState))
+              (Nil, replaying(e.seqNr, currentState, waitingExecutions))
             }
 
           case AllObjectsReplayed =>
-            val (newState, sideEffects) = p.sideEffects(currentState, manager.config.fileInfoOf)
+            val (newState0, sideEffects0) = p.sideEffects(currentState, manager.config.fileInfoOf)
+
+            // run all waiting executions
+            val (newState, sideEffects) = waitingExecutions.foldLeft((newState0, sideEffects0)) { (cur, next) =>
+              val (lastState, lastEffects) = cur
+              val (nextEffects, nextState) = execute(next, lastState)
+              (nextState, lastEffects ++ nextEffects)
+            }
+
             (sideEffects, ignoreDuplicateSeqNrs(currentSeqNr, newState))
 
-          case e: Execute[p.S, t] => execute(e.f, e.promise, currentState, replaying(currentSeqNr, _))
+          case e: Execute[p.S, t] => (Nil, replaying(currentSeqNr, currentState, waitingExecutions :+ e))
 
           case ShuttingDown       => shutdown(currentSeqNr, currentState)
         }
@@ -108,9 +116,11 @@ object MetadataProcess {
           case Metadata(e) if e.seqNr <= currentSeqNr => (Nil, ignoreDuplicateSeqNrs(currentSeqNr, currentState))
           case m: Metadata                            => liveEvents(currentSeqNr, currentState)(m)
 
-          case e: Execute[p.S, t]                     => execute(e.f, e.promise, currentState, ignoreDuplicateSeqNrs(currentSeqNr, _))
+          case e: Execute[p.S, t] =>
+            val (sideEffects, newState) = execute(e, currentState)
+            (sideEffects, ignoreDuplicateSeqNrs(currentSeqNr, newState))
 
-          case ShuttingDown                           => shutdown(currentSeqNr, currentState)
+          case ShuttingDown => shutdown(currentSeqNr, currentState)
         }
         def liveEvents(currentSeqNr: Long, currentState: p.S): Handler = {
           case Metadata(e) =>
@@ -124,22 +134,24 @@ object MetadataProcess {
               println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
               (Nil, liveEvents(e.seqNr, currentState))
             }
-          case e: Execute[p.S, t] => execute(e.f, e.promise, currentState, liveEvents(currentSeqNr, _))
+          case e: Execute[p.S, t] =>
+            val (sideEffects, newState) = execute(e, currentState)
+            (sideEffects, liveEvents(currentSeqNr, newState))
 
-          case ShuttingDown       => shutdown(currentSeqNr, currentState)
+          case ShuttingDown => shutdown(currentSeqNr, currentState)
         }
         def shutdown(currentSeqNr: Long, currentState: p.S): (immutable.Iterable[SideEffect], Handler) = {
           serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
           (Nil, closing)
         }
-        def execute[T](f: p.S => (p.S, Vector[SideEffect], T), promise: Promise[T], currentState: p.S, nextHandler: p.S => Handler): (immutable.Iterable[SideEffect], Handler) =
-          Try(f(currentState)) match {
+        def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
+          Try(e.f(currentState)) match {
             case Success((newState, sideEffects, res)) =>
-              promise.trySuccess(res)
-              (sideEffects, nextHandler(newState))
+              e.promise.trySuccess(res)
+              (sideEffects, newState)
             case Failure(ex) =>
-              promise.tryFailure(ex)
-              (Nil, SameHandler)
+              e.promise.tryFailure(ex)
+              (Nil, currentState)
           }
 
         lazy val closing: Handler = _ => (Nil, closing)
@@ -147,7 +159,7 @@ object MetadataProcess {
         val snapshot =
           deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
         println("Initialized process")
-        var curHandler: Handler = skipOverSnapshot(snapshot.currentSeqNr, snapshot.state)
+        var curHandler: Handler = skipOverSnapshot(snapshot.currentSeqNr, snapshot.state, Vector.empty)
 
         e => {
           val (els, newHandler) = curHandler(e)
