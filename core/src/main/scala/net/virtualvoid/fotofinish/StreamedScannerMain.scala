@@ -4,43 +4,49 @@ import java.io.File
 
 import akka.actor.ActorSystem
 import akka.stream.OverflowStrategy
-import akka.stream.scaladsl.{ Sink, Source }
+import akka.stream.scaladsl.{ Keep, MergeHub, Sink, Source }
+import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
 import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, IngestionDataExtractor, MetadataEntry }
 
 import scala.concurrent.duration._
 
 object StreamedScannerMain extends App {
+  val parallelism = 8
+
   implicit val system = ActorSystem()
   import system.dispatcher
 
   // setup main stream
-  val (killSwitch, journal) = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
+  val (killSwitch, journalIn, journalOut) = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
 
-  val queue =
+  /*  val queue =
     Source.queue[MetadataEntry](1000, OverflowStrategy.dropNew)
       .via(journal)
       .to(Sink.foreach(println))
+      .run()*/
+
+  val executor: Sink[SideEffect, Any] =
+    MergeHub.source[SideEffect]
+      .mapAsyncUnordered(parallelism)(_())
+      .mapConcat(identity)
+      .to(journalIn)
       .run()
 
-  journal
-    .join(
-      MetadataProcess.asStream(new MetadataIsCurrentProcess(ExifBaseDataExtractor), Settings.manager)
-        .mapAsync(4)(se => se())
-        .mapConcat { entries =>
-          println(s"Got ${entries.size} more entries")
-          entries
-        }
-    )
-    .run()
+  def runProcess(process: MetadataProcess): process.Api =
+    journalOut
+      .viaMat(MetadataProcess.asStream(process, Settings.manager))(Keep.right)
+      .to(executor)
+      .run()
+
+  runProcess(new MetadataIsCurrentProcess(ExifBaseDataExtractor))
+  val ingestor = runProcess(new IngestionController)
 
   system.registerOnTermination(killSwitch.shutdown())
 
   val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
   println(s"Ingesting new files from $dir")
   val is = new Scanner(Settings.config, Settings.manager).scan(dir)
-  is
-    .map(IngestionDataExtractor.extractMetadata(_).get)
-    .foreach(queue.offer(_))
+  is.foreach(ingestor)
 
   system.scheduler.scheduleOnce(5.seconds) {
     killSwitch.shutdown()

@@ -5,17 +5,17 @@ import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
 import akka.actor.ActorSystem
 import akka.pattern.after
-import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Source }
-import akka.stream.{ KillSwitch, KillSwitches }
+import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
+import akka.stream.{ KillSwitch, KillSwitches, OverflowStrategy, QueueOfferResult }
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.{ MetadataEntry, MetadataExtractor, MetadataManager }
+import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, MetadataEntry, MetadataExtractor, MetadataManager }
 import spray.json.JsonFormat
 
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.{ ExecutionContext, Future }
-import scala.util.Try
+import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.util.{ Success, Try }
 import scala.util.control.NonFatal
 
 trait MetadataProcess {
@@ -28,7 +28,7 @@ trait MetadataProcess {
   def initialState: S
   def processEvent(state: S, event: MetadataEntry): S
   def sideEffects(state: S, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (S, Vector[SideEffect])
-  def api(stateAccess: () => Future[S])(implicit ec: ExecutionContext): Api
+  def api(stateAccess: () => Future[S], injectEntries: Vector[MetadataEntry] => Unit)(implicit ec: ExecutionContext): Api
 
   def stateFormat: JsonFormat[S]
   /** Allows to prepare state loaded from snapshot */
@@ -44,18 +44,47 @@ object MetadataProcess {
   final case class Metadata(entry: MetadataEntry) extends StreamEntry
   case object AllObjectsReplayed extends StreamEntry
   case object ShuttingDown extends StreamEntry
+  final case class GetCurrentState[S](p: Promise[S]) extends StreamEntry
+  final case class InjectEntries(entries: Vector[MetadataEntry]) extends StreamEntry
 
-  def asStream(p: MetadataProcess, manager: RepositoryManager)(implicit ec: ExecutionContext): Flow[StreamEntry, SideEffect, Any] =
+  def asStream(p: MetadataProcess, manager: RepositoryManager)(implicit ec: ExecutionContext): Flow[StreamEntry, SideEffect, p.Api] = {
+    val injectApi: Source[StreamEntry, p.Api] =
+      Source.queue[StreamEntry](1000, OverflowStrategy.dropNew)
+        .mapMaterializedValue { queue =>
+          val accessState: () => Future[p.S] = () => {
+            val promise = Promise[p.S]
+            queue.offer(GetCurrentState(promise))
+              .transformWith {
+                case Success(QueueOfferResult.Enqueued) => promise.future
+                case x                                  => Future.failed(new IllegalStateException(s"Api call failed because queue offer returned [$x]"))
+              }
+          }
+
+          def injectEntries(entries: Vector[MetadataEntry]): Unit =
+            queue.offer(InjectEntries(entries))
+              .onComplete {
+                case Success(QueueOfferResult.Enqueued) =>
+                case x                                  => println(s"Injecting entries failed because of $x")
+              }
+
+          p.api(accessState, injectEntries)
+        }
+
     Flow[StreamEntry]
+      .mergeMat(injectApi)(Keep.right)
       .statefulMapConcat[SideEffect] { () =>
         abstract class Handler {
           def apply(e: StreamEntry): (immutable.Iterable[SideEffect], Handler)
         }
+        val SameHandler: Handler = _ => ???
+
         def skipOverSnapshot(currentSeqNr: Long, currentState: p.S): Handler =
           if (currentSeqNr == -1) replaying(currentSeqNr, currentState)
           else {
             case Metadata(entry) if entry.seqNr == currentSeqNr => (Nil, replaying(currentSeqNr, currentState))
-            case m: Metadata                                    => (Nil, skipOverSnapshot(currentSeqNr, currentState))
+            case _: Metadata                                    => (Nil, skipOverSnapshot(currentSeqNr, currentState))
+            case s: GetCurrentState[p.S]                        => getState(s.p, currentState)
+            case InjectEntries(entries)                         => inject(entries)
             case ShuttingDown                                   => (Nil, closing)
           }
 
@@ -75,11 +104,18 @@ object MetadataProcess {
             val (newState, sideEffects) = p.sideEffects(currentState, manager.config.fileInfoOf)
             (sideEffects, ignoreDuplicateSeqNrs(currentSeqNr, newState))
 
-          case ShuttingDown => shutdown(currentSeqNr, currentState)
+          case s: GetCurrentState[p.S] => getState(s.p, currentState)
+          case InjectEntries(entries)  => inject(entries)
+
+          case ShuttingDown            => shutdown(currentSeqNr, currentState)
         }
         def ignoreDuplicateSeqNrs(currentSeqNr: Long, currentState: p.S): Handler = {
           case Metadata(e) if e.seqNr <= currentSeqNr => (Nil, ignoreDuplicateSeqNrs(currentSeqNr, currentState))
           case m: Metadata                            => liveEvents(currentSeqNr, currentState)(m)
+
+          case s: GetCurrentState[p.S]                => getState(s.p, currentState)
+          case InjectEntries(entries)                 => inject(entries)
+
           case ShuttingDown                           => shutdown(currentSeqNr, currentState)
         }
         def liveEvents(currentSeqNr: Long, currentState: p.S): Handler = {
@@ -94,15 +130,23 @@ object MetadataProcess {
               println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
               (Nil, liveEvents(e.seqNr, currentState))
             }
-          case ShuttingDown => shutdown(currentSeqNr, currentState)
+          case s: GetCurrentState[p.S] => getState(s.p, currentState)
+          case InjectEntries(entries)  => inject(entries)
+
+          case ShuttingDown            => shutdown(currentSeqNr, currentState)
         }
         def shutdown(currentSeqNr: Long, currentState: p.S): (immutable.Iterable[SideEffect], Handler) = {
           serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
           (Nil, closing)
         }
-        lazy val closing: Handler = {
-          case x => (Nil, closing)
+        def getState(promise: Promise[p.S], currentState: p.S): (immutable.Iterable[SideEffect], Handler) = {
+          promise.trySuccess(currentState)
+          (Nil, SameHandler)
         }
+        def inject(entries: Vector[MetadataEntry]): (immutable.Iterable[SideEffect], Handler) =
+          ((() => Future.successful(entries)) :: Nil, SameHandler)
+
+        lazy val closing: Handler = _ => (Nil, closing)
 
         val snapshot =
           deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
@@ -111,7 +155,7 @@ object MetadataProcess {
 
         e => {
           val (els, newHandler) = curHandler(e)
-          curHandler = newHandler
+          if (newHandler ne SameHandler) curHandler = newHandler
           els
         }
       }
@@ -121,6 +165,7 @@ object MetadataProcess {
           ex.printStackTrace()
           Source.empty
       })
+  }
 
   private case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
   import spray.json.DefaultJsonProtocol._
@@ -167,7 +212,7 @@ object MetadataProcess {
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def journal(manager: RepositoryManager, meta: MetadataManager)(implicit system: ActorSystem): (KillSwitch, Flow[MetadataEntry, StreamEntry, Any]) = {
+  def journal(manager: RepositoryManager, meta: MetadataManager)(implicit system: ActorSystem): (KillSwitch, Sink[MetadataEntry, Any], Source[StreamEntry, Any]) = {
     import system.dispatcher
 
     val killSwitch = KillSwitches.shared("kill-journal")
@@ -226,12 +271,10 @@ object MetadataProcess {
 
     (
       killSwitch,
-      Flow.fromSinkAndSource(
-        liveSink,
-        existingEntries
-          .concat(liveSource.map(Metadata))
-          .concat(Source.single(ShuttingDown))
-      )
+      liveSink,
+      existingEntries
+      .concat(liveSource.map(Metadata))
+      .concat(Source.single(ShuttingDown))
     )
   }
 }
@@ -247,11 +290,47 @@ object GetAllObjectsProcess extends MetadataProcess {
   def processEvent(state: State, event: MetadataEntry): State =
     state.copy(knownHashes = state.knownHashes + event.header.forData)
   def sideEffects(state: State, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
-  def api(stateAccess: () => Future[State])(implicit ec: ExecutionContext): () => Future[Set[Hash]] =
+  def api(stateAccess: () => Future[State], injectEntries: Vector[MetadataEntry] => Unit)(implicit ec: ExecutionContext): () => Future[Set[Hash]] =
     () => stateAccess().map(_.knownHashes)
 
   import spray.json.DefaultJsonProtocol._
   lazy val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
+}
+
+class IngestionController extends MetadataProcess {
+  case class State(datas: Map[Hash, Vector[IngestionData]]) {
+    def add(hash: Hash, data: IngestionData): State =
+      copy(datas = datas + (hash -> (datas.getOrElse(hash, Vector.empty) :+ data)))
+  }
+  type S = State
+  type Api = FileInfo => Unit
+
+  override def version: Int = 1
+  override def initialState: State = State(Map.empty)
+
+  override def processEvent(state: State, event: MetadataEntry): State = event match {
+    case entry if entry.extractor == IngestionDataExtractor => state.add(entry.header.forData, entry.data.asInstanceOf[IngestionData])
+    case _ => state
+  }
+  override def sideEffects(state: State, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+
+  override def api(stateAccess: () => Future[State], injectEntries: Vector[MetadataEntry] => Unit)(implicit ec: ExecutionContext): FileInfo => Unit = { fi =>
+    def matches(data: IngestionData): Boolean =
+      fi.originalFile.exists(f => f.getName == data.originalFileName && f.getParent == data.originalFilePath)
+
+    stateAccess()
+      .map { state =>
+        println(s"Checking if $fi needs ingesting...")
+        if (!state.datas.get(fi.hash).exists(_.exists(matches))) {
+          println(s"Injecting [${state.datas.get(fi.hash)}]")
+          injectEntries(IngestionDataExtractor.extractMetadata(fi).toOption.toVector)
+        } else println(s"Did not ingest $fi because there already was an entry")
+      }
+  }
+  import spray.json._
+  import DefaultJsonProtocol._
+  implicit val idFormat = IngestionDataExtractor.metadataFormat
+  val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
 }
 
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
@@ -307,7 +386,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     }
   }
 
-  def api(stateAccess: () => Future[S])(implicit ec: ExecutionContext): Unit = ()
+  def api(stateAccess: () => Future[S], injectEntries: Vector[MetadataEntry] => Unit)(implicit ec: ExecutionContext): Unit = ()
 
   import spray.json.DefaultJsonProtocol._
   import spray.json._
