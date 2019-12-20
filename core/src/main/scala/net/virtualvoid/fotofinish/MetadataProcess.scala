@@ -1,24 +1,24 @@
 package net.virtualvoid.fotofinish
 
-import scala.language.implicitConversions
 import java.io.{ File, FileInputStream, FileOutputStream }
 import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
 import akka.actor.ActorSystem
 import akka.pattern.after
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
-import akka.stream.{ KillSwitch, KillSwitches, OverflowStrategy, QueueOfferResult }
+import akka.stream.{ KillSwitches, OverflowStrategy, QueueOfferResult }
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, MetadataEntry, MetadataExtractor, MetadataManager }
+import net.virtualvoid.fotofinish.metadata._
 import spray.json.JsonFormat
 
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, Future, Promise }
-import scala.util.{ Failure, Success, Try }
+import scala.language.implicitConversions
 import scala.util.control.NonFatal
+import scala.util.{ Failure, Success, Try }
 
 trait HandleWithStateFunc[S] {
   def apply[T](f: S => (S, Vector[SideEffect], T)): Future[T]
@@ -52,9 +52,13 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
+  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] =
+    journal.source(-1)
+      .viaMat(MetadataProcess.asStream(p, Settings.manager))(Keep.right)
+
   def asStream(p: MetadataProcess, manager: RepositoryManager)(implicit ec: ExecutionContext): Flow[StreamEntry, SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
-      Source.queue[StreamEntry](1000, OverflowStrategy.dropNew)
+      Source.queue[StreamEntry](1000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mapMaterializedValue { queue =>
           p.api(new HandleWithStateFunc[p.S] {
             def apply[T](f: p.S => (p.S, Vector[SideEffect], T)): Future[T] = {
@@ -98,7 +102,7 @@ object MetadataProcess {
           else {
             case Metadata(entry) if entry.seqNr == currentSeqNr => replaying(waitingExecutions)
             case _: Metadata                                    => Effect.empty
-            case e: Execute[p.S, t]                             => Effect.changeHandler(skipOverSnapshot(waitingExecutions :+ e))
+            case e: Execute[p.S, t] @unchecked                  => Effect.changeHandler(skipOverSnapshot(waitingExecutions :+ e))
             case ShuttingDown                                   => closing
           }
 
@@ -133,9 +137,9 @@ object MetadataProcess {
               .changeState(newState)
               .schedule(sideEffects)
 
-          case e: Execute[p.S, t] => replaying(waitingExecutions :+ e)
+          case e: Execute[p.S, t] @unchecked => replaying(waitingExecutions :+ e)
 
-          case ShuttingDown       => shutdown()
+          case ShuttingDown                  => shutdown()
         }
         def ignoreDuplicateSeqNrs: Handler = {
           case Metadata(e) if e.seqNr <= currentSeqNr =>
@@ -143,7 +147,7 @@ object MetadataProcess {
             Effect.empty
           case m: Metadata => Effect.changeHandler(liveEvents).andRun(m)
 
-          case e: Execute[p.S, t] =>
+          case e: Execute[p.S, t] @unchecked =>
             val (sideEffects, newState) = execute(e, currentState)
             Effect
               .changeState(newState)
@@ -167,13 +171,15 @@ object MetadataProcess {
               Effect
                 .changeSeqNr(e.seqNr)
             }
-          case e: Execute[p.S, t] =>
+          case e: Execute[p.S, t] @unchecked =>
             val (sideEffects, newState) = execute(e, currentState)
             Effect
               .changeState(newState)
               .schedule(sideEffects)
 
-          case ShuttingDown => shutdown()
+          case ShuttingDown       => shutdown()
+
+          case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
         }
         def shutdown(): Effect = {
           serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
@@ -262,11 +268,17 @@ object MetadataProcess {
       None
   }
 
+  trait Journal {
+    def newEntrySink: Sink[MetadataEntry, Any]
+    def source(fromSeqNr: Long): Source[StreamEntry, Any]
+    def shutdown(): Unit
+  }
+
   /**
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def journal(manager: RepositoryManager, meta: MetadataManager)(implicit system: ActorSystem): (KillSwitch, Sink[MetadataEntry, Any], Source[StreamEntry, Any]) = {
+  def journal(manager: RepositoryManager, meta: MetadataManager)(implicit system: ActorSystem): Journal = {
     import system.dispatcher
 
     val killSwitch = KillSwitches.shared("kill-journal")
@@ -323,13 +335,14 @@ object MetadataProcess {
         .toMat(BroadcastHub.sink[MetadataEntry](2048))(Keep.both)
         .run()
 
-    (
-      killSwitch,
-      liveSink,
-      existingEntries
-      .concat(liveSource.map(Metadata))
-      .concat(Source.single(ShuttingDown))
-    )
+    new Journal {
+      override def newEntrySink: Sink[MetadataEntry, Any] = liveSink
+      override def source(fromSeqNr: Long): Source[StreamEntry, Any] =
+        existingEntries
+          .concat(liveSource.map(Metadata))
+          .concat(Source.single(ShuttingDown))
+      override def shutdown(): Unit = killSwitch.shutdown()
+    }
   }
 }
 
@@ -462,6 +475,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
         case JsString("Known")      => Known
         case JsString("Scheduled")  => Scheduled
         case JsString("Calculated") => json.convertTo[Calculated]
+        case x                      => throw DeserializationException(s"Unexpected type '$x' for HashState")
       }
 
     override def write(obj: HashState): JsValue = obj match {

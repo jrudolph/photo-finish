@@ -21,7 +21,7 @@ object StreamedScannerMain extends App {
   import system.dispatcher
 
   // setup main stream
-  val (killSwitch, journalIn, journalOut) = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
+  val journal = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
 
   /*  val queue =
     Source.queue[MetadataEntry](1000, OverflowStrategy.dropNew)
@@ -33,19 +33,18 @@ object StreamedScannerMain extends App {
     MergeHub.source[SideEffect]
       .mapAsyncUnordered(parallelism)(_())
       .mapConcat(identity)
-      .to(journalIn)
+      .to(journal.newEntrySink)
       .run()
 
   def runProcess(process: MetadataProcess): process.Api =
-    journalOut
-      .viaMat(MetadataProcess.asStream(process, Settings.manager))(Keep.right)
+    MetadataProcess.asSource(process, Settings.manager, journal)
       .to(executor)
       .run()
 
   val ingestor = runProcess(new IngestionController)
   autoExtractors.foreach(e => runProcess(new MetadataIsCurrentProcess(e)))
 
-  system.registerOnTermination(killSwitch.shutdown())
+  system.registerOnTermination(journal.shutdown())
 
   val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
   println(s"Ingesting new files from $dir")
@@ -54,7 +53,7 @@ object StreamedScannerMain extends App {
 
   system.scheduler.scheduleOnce(5.seconds) {
     println("Shutting down...")
-    killSwitch.shutdown()
+    journal.shutdown()
     system.scheduler.scheduleOnce(1.seconds)(system.terminate())
   }
 }
