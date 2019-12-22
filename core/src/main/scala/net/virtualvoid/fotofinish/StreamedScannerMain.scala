@@ -3,7 +3,7 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.{ Keep, MergeHub, Sink }
+import akka.stream.scaladsl.{ MergeHub, Sink }
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
 import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
 
@@ -23,7 +23,7 @@ object StreamedScannerMain extends App {
   // setup main stream
   val journal = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
 
-  /*  val queue =
+  /* val queue =
     Source.queue[MetadataEntry](1000, OverflowStrategy.dropNew)
       .via(journal)
       .to(Sink.foreach(println))

@@ -5,10 +5,11 @@ import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
 import akka.actor.ActorSystem
 import akka.pattern.after
+import akka.stream._
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
-import akka.stream.{ KillSwitches, OverflowStrategy, QueueOfferResult }
+import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
-import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
+import net.virtualvoid.fotofinish.MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
 import net.virtualvoid.fotofinish.metadata._
 import spray.json.JsonFormat
 
@@ -52,11 +53,7 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] =
-    journal.source(-1)
-      .viaMat(MetadataProcess.asStream(p, Settings.manager))(Keep.right)
-
-  def asStream(p: MetadataProcess, manager: RepositoryManager)(implicit ec: ExecutionContext): Flow[StreamEntry, SideEffect, p.Api] = {
+  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](1000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mapMaterializedValue { queue =>
@@ -73,158 +70,153 @@ object MetadataProcess {
           })
         }
 
-    Flow[StreamEntry]
-      .mergeMat(injectApi)(Keep.right)
-      .statefulMapConcat[SideEffect] { () =>
-        case class Effect(sideEffects: immutable.Iterable[SideEffect], nextHandler: Handler, newSeqNr: Long, newState: p.S, runStreamEntry: StreamEntry = null) {
-          def schedule(newSideEffects: immutable.Iterable[SideEffect]): Effect = copy(sideEffects ++ newSideEffects)
-          def changeState(state: p.S): Effect = copy(newState = state)
-          def changeSeqNr(seqNr: Long): Effect = copy(newSeqNr = seqNr)
-          def changeHandler(handler: Handler): Effect = copy(nextHandler = handler)
-          def andRun(entry: StreamEntry): Effect = copy(runStreamEntry = entry)
-        }
-        val SameHandler: Handler = _ => ???
-        object Effect {
-          def empty: Effect = Effect(Vector.empty, SameHandler, -2, null.asInstanceOf[p.S])
-        }
-        implicit def effectMethods(e: Effect.type): Effect = Effect.empty
-        implicit def changeHandler(h: Handler): Effect = Effect.changeHandler(h)
-        abstract class Handler {
-          def apply(e: StreamEntry): Effect
-        }
-        var _curSeqNr: Long = -1
-        var _curState: p.S = null.asInstanceOf[p.S]
-        def currentSeqNr: Long = _curSeqNr
-        def currentState: p.S = _curState
+    val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
 
-        def skipOverSnapshot(waitingExecutions: Vector[Execute[p.S, _]]): Handler =
-          if (currentSeqNr == -1) replaying(waitingExecutions)
-          else {
-            case Metadata(entry) if entry.seqNr == currentSeqNr => replaying(waitingExecutions)
-            case _: Metadata                                    => Effect.empty
-            case e: Execute[p.S, t] @unchecked                  => Effect.changeHandler(skipOverSnapshot(waitingExecutions :+ e))
-            case ShuttingDown                                   => closing
+    val processFlow =
+      Flow[StreamEntry]
+        .mergeMat(injectApi)(Keep.right)
+        .statefulMapConcat[SideEffect] { () =>
+          case class Effect(sideEffects: immutable.Iterable[SideEffect], nextHandler: Handler, newSeqNr: Long, newState: p.S, runStreamEntry: StreamEntry = null) {
+            def schedule(newSideEffects: immutable.Iterable[SideEffect]): Effect = copy(sideEffects ++ newSideEffects)
+            def changeState(state: p.S): Effect = copy(newState = state)
+            def changeSeqNr(seqNr: Long): Effect = copy(newSeqNr = seqNr)
+            def changeHandler(handler: Handler): Effect = copy(nextHandler = handler)
+            def andRun(entry: StreamEntry): Effect = copy(runStreamEntry = entry)
           }
+          val SameHandler: Handler = _ => ???
+          object Effect {
+            def empty: Effect = Effect(Vector.empty, SameHandler, -2, null.asInstanceOf[p.S])
+          }
+          implicit def effectMethods(e: Effect.type): Effect = Effect.empty
+          implicit def changeHandler(h: Handler): Effect = Effect.changeHandler(h)
+          abstract class Handler {
+            def apply(e: StreamEntry): Effect
+          }
+          var _curSeqNr: Long = -1
+          var _curState: p.S = null.asInstanceOf[p.S]
+          def currentSeqNr: Long = _curSeqNr
+          def currentState: p.S = _curState
 
-        def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
-          case Metadata(e) =>
-            if (e.seqNr == currentSeqNr + 1) {
-              val newState = p.processEvent(currentState, e)
+          def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
+            case Metadata(e) =>
+              if (e.seqNr == currentSeqNr + 1) {
+                val newState = p.processEvent(currentState, e)
+                Effect
+                  .changeSeqNr(e.seqNr)
+                  .changeState(newState)
+              } else if (e.seqNr < currentSeqNr + 1)
+                throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
+              else {
+                println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
+                Effect.changeSeqNr(e.seqNr)
+              }
+
+            case AllObjectsReplayed =>
+              println(s"[${p.id}] finished replaying")
+
+              val (newState0, sideEffects0) = p.sideEffects(currentState, manager.config.fileInfoOf)
+
+              // run all waiting executions
+              val (newState, sideEffects) = waitingExecutions.foldLeft((newState0, sideEffects0)) { (cur, next) =>
+                val (lastState, lastEffects) = cur
+                val (nextEffects, nextState) = execute(next, lastState)
+                (nextState, lastEffects ++ nextEffects)
+              }
+
               Effect
-                .changeSeqNr(e.seqNr)
+                .changeHandler(ignoreDuplicateSeqNrs)
                 .changeState(newState)
-            } else if (e.seqNr < currentSeqNr + 1)
-              throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-            else {
-              println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              Effect.changeSeqNr(e.seqNr)
-            }
-
-          case AllObjectsReplayed =>
-            println(s"[${p.id}] finished replaying")
-
-            val (newState0, sideEffects0) = p.sideEffects(currentState, manager.config.fileInfoOf)
-
-            // run all waiting executions
-            val (newState, sideEffects) = waitingExecutions.foldLeft((newState0, sideEffects0)) { (cur, next) =>
-              val (lastState, lastEffects) = cur
-              val (nextEffects, nextState) = execute(next, lastState)
-              (nextState, lastEffects ++ nextEffects)
-            }
-
-            Effect
-              .changeHandler(ignoreDuplicateSeqNrs)
-              .changeState(newState)
-              .schedule(sideEffects)
-
-          case e: Execute[p.S, t] @unchecked => replaying(waitingExecutions :+ e)
-
-          case ShuttingDown                  => shutdown()
-        }
-        def ignoreDuplicateSeqNrs: Handler = {
-          case Metadata(e) if e.seqNr <= currentSeqNr =>
-            println(s"[${p.id}] at $currentSeqNr got ${e.seqNr}. Ignoring")
-            Effect.empty
-          case m: Metadata => Effect.changeHandler(liveEvents).andRun(m)
-
-          case e: Execute[p.S, t] @unchecked =>
-            val (sideEffects, newState) = execute(e, currentState)
-            Effect
-              .changeState(newState)
-              .schedule(sideEffects)
-
-          case ShuttingDown => shutdown()
-        }
-        def liveEvents: Handler = {
-          case Metadata(e) =>
-            if (e.seqNr == currentSeqNr + 1) {
-              val newState0 = p.processEvent(currentState, e)
-              val (newState1, sideEffects) = p.sideEffects(newState0, manager.config.fileInfoOf)
-              Effect
-                .changeSeqNr(e.seqNr)
-                .changeState(newState1)
                 .schedule(sideEffects)
-            } else if (e.seqNr < currentSeqNr + 1)
-              throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-            else {
-              println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
+
+            case e: Execute[p.S, t] @unchecked => replaying(waitingExecutions :+ e)
+
+            case ShuttingDown                  => shutdown()
+          }
+          def ignoreDuplicateSeqNrs: Handler = {
+            case Metadata(e) if e.seqNr <= currentSeqNr =>
+              println(s"[${p.id}] at $currentSeqNr got ${e.seqNr}. Ignoring")
+              Effect.empty
+            case m: Metadata => Effect.changeHandler(liveEvents).andRun(m)
+
+            case e: Execute[p.S, t] @unchecked =>
+              val (sideEffects, newState) = execute(e, currentState)
               Effect
-                .changeSeqNr(e.seqNr)
+                .changeState(newState)
+                .schedule(sideEffects)
+
+            case ShuttingDown => shutdown()
+          }
+          def liveEvents: Handler = {
+            case Metadata(e) =>
+              if (e.seqNr == currentSeqNr + 1) {
+                val newState0 = p.processEvent(currentState, e)
+                val (newState1, sideEffects) = p.sideEffects(newState0, manager.config.fileInfoOf)
+                Effect
+                  .changeSeqNr(e.seqNr)
+                  .changeState(newState1)
+                  .schedule(sideEffects)
+              } else if (e.seqNr < currentSeqNr + 1)
+                throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
+              else {
+                println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
+                Effect
+                  .changeSeqNr(e.seqNr)
+              }
+            case e: Execute[p.S, t] @unchecked =>
+              val (sideEffects, newState) = execute(e, currentState)
+              Effect
+                .changeState(newState)
+                .schedule(sideEffects)
+
+            case ShuttingDown       => shutdown()
+
+            case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
+          }
+          def shutdown(): Effect = {
+            serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
+            closing
+          }
+          // FIXME: try to use Effect here as well (complicated because then we need to be able to stack effects
+          def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
+            Try(e.f(currentState)) match {
+              case Success((newState, sideEffects, res)) =>
+                e.promise.trySuccess(res)
+                (sideEffects, newState)
+              case Failure(ex) =>
+                e.promise.tryFailure(ex)
+                (Nil, currentState)
             }
-          case e: Execute[p.S, t] @unchecked =>
-            val (sideEffects, newState) = execute(e, currentState)
-            Effect
-              .changeState(newState)
-              .schedule(sideEffects)
 
-          case ShuttingDown       => shutdown()
+          lazy val closing: Handler = _ => changeHandler(SameHandler)
 
-          case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
-        }
-        def shutdown(): Effect = {
-          serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
-          closing
-        }
-        // FIXME: try to use Effect here as well (complicated because then we need to be able to stack effects
-        def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
-          Try(e.f(currentState)) match {
-            case Success((newState, sideEffects, res)) =>
-              e.promise.trySuccess(res)
-              (sideEffects, newState)
-            case Failure(ex) =>
-              e.promise.tryFailure(ex)
-              (Nil, currentState)
+          println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
+          _curSeqNr = snapshot.currentSeqNr
+          _curState = snapshot.state
+          var curHandler: Handler = replaying(Vector.empty)
+
+          e => {
+            @tailrec def run(sideEffects: Vector[SideEffect]): Vector[SideEffect] = {
+              val Effect(els, newHandler, newSeqNr, newState, runStreamEntry) = curHandler(e)
+              if (newHandler ne SameHandler) curHandler = newHandler
+              if (newSeqNr != -2) _curSeqNr = newSeqNr
+              if (newState != null) _curState = newState
+
+              val newSideEffects = sideEffects ++ els
+              if (runStreamEntry ne null) run(newSideEffects)
+              else newSideEffects
+            }
+            run(Vector.empty)
           }
-
-        lazy val closing: Handler = _ => changeHandler(SameHandler)
-
-        val snapshot =
-          deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
-        println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
-        _curSeqNr = snapshot.currentSeqNr
-        _curState = snapshot.state
-        var curHandler: Handler = skipOverSnapshot(Vector.empty)
-
-        e => {
-          @tailrec def run(sideEffects: Vector[SideEffect]): Vector[SideEffect] = {
-            val Effect(els, newHandler, newSeqNr, newState, runStreamEntry) = curHandler(e)
-            if (newHandler ne SameHandler) curHandler = newHandler
-            if (newSeqNr != -2) _curSeqNr = newSeqNr
-            if (newState != null) _curState = newState
-
-            val newSideEffects = sideEffects ++ els
-            if (runStreamEntry ne null) run(newSideEffects)
-            else newSideEffects
-          }
-          run(Vector.empty)
         }
-      }
-      .recoverWithRetries(1, {
-        case ex =>
-          println(s"Process for [${p.id}] failed with [${ex.getMessage}]. Aborting the process.")
-          ex.printStackTrace()
-          Source.empty
-      })
+        .recoverWithRetries(1, {
+          case ex =>
+            println(s"Process for [${p.id}] failed with [${ex.getMessage}]. Aborting the process.")
+            ex.printStackTrace()
+            Source.empty
+        })
+
+    journal.source(snapshot.currentSeqNr + 1)
+      .viaMat(processFlow)(Keep.right)
   }
 
   private case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
@@ -323,10 +315,25 @@ object MetadataProcess {
         }
       }
 
-    val existingEntries: Source[StreamEntry, Any] =
-      Source.lazyFutureSource(readAllEntries)
-        .map[StreamEntry](Metadata)
-        .concat(Source.single(AllObjectsReplayed))
+    // A persisting source that replays all existing journal entries on and on as long as something listens to it.
+    // The idea is similar to IP multicast that multiple subscribers can attach to the already running program and
+    // the overhead for providing the data is only paid once for all subscribers.
+    // Another analogy would be a news ticker on a news channel where casual watchers can come and go at any point in
+    // time and would eventually get all the information as everyone else (without requiring a dedicated TV for any watcher).
+    val existingEntryWheel: Source[StreamEntry, Any] =
+      Source
+        .fromGraph(new RepeatSource(
+          Source.lazyFutureSource(readAllEntries).map[StreamEntry](Metadata)
+            .concat(
+              Source.single(AllObjectsReplayed)
+            )
+        ))
+        .runWith(BroadcastHub.sink(1024))
+
+    // Attaches to the wheel but only returns the journal entries between the given seqNr and AllObjectsReplayed.
+    def existingEntriesStartingWith(fromSeqNr: Long): Source[StreamEntry, Any] =
+      existingEntryWheel
+        .via(new TakeFromWheel(fromSeqNr))
 
     val (liveSink, liveSource) =
       MergeHub.source[MetadataEntry]
@@ -338,7 +345,7 @@ object MetadataProcess {
     new Journal {
       override def newEntrySink: Sink[MetadataEntry, Any] = liveSink
       override def source(fromSeqNr: Long): Source[StreamEntry, Any] =
-        existingEntries
+        existingEntriesStartingWith(fromSeqNr)
           .concat(liveSource.map(Metadata))
           .concat(Source.single(ShuttingDown))
       override def shutdown(): Unit = killSwitch.shutdown()
@@ -491,4 +498,96 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
       case Scheduled => Known // throw away markers that a calculation is already in process
       case x         => x
     })
+}
+
+/**
+ * A source that infinitely repeats the given source (by rematerializing it when the previous
+ * instance was exhausted.
+ *
+ * Note that the elements can differ between rematerializations depending on the given source.
+ */
+class RepeatSource[T](source: Source[T, Any]) extends GraphStage[SourceShape[T]] {
+  val out = Outlet[T]("RepeatSource.out")
+  val shape: SourceShape[T] = SourceShape(out)
+
+  def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+    val waitingForInitialPull = new OutHandler {
+      override def onPull(): Unit = {
+        val in = new SubSinkInlet[T]("RepeatSource.in")
+        val handler = supplying(in)
+        in.setHandler(handler)
+        setHandler(out, handler)
+        in.pull()
+        source.runWith(in.sink)(subFusingMaterializer)
+      }
+    }
+    setHandler(out, waitingForInitialPull)
+
+    def supplying(in: SubSinkInlet[T]): OutHandler with InHandler = new OutHandler with InHandler {
+      override def onPull(): Unit = if (!in.hasBeenPulled) in.pull()
+      override def onDownstreamFinish(cause: Throwable): Unit = {
+        in.cancel(cause)
+        super.onDownstreamFinish(cause)
+      }
+
+      override def onPush(): Unit = push(out, in.grab())
+      override def onUpstreamFinish(): Unit = {
+        setHandler(out, waitingForInitialPull)
+        if (isAvailable(out)) waitingForInitialPull.onPull()
+      }
+      // just propagate failure
+      // override def onUpstreamFailure(ex: Throwable): Unit = super.onUpstreamFailure(ex)
+    }
+  }
+}
+
+/** A stage that ignores element from the journal wheel until it finds the first matching  */
+class TakeFromWheel(firstSeqNr: Long) extends GraphStage[FlowShape[StreamEntry, StreamEntry]] {
+  val in = Inlet[StreamEntry]("TakeFromWheel.in")
+  val out = Outlet[StreamEntry]("TakeFromWheel.out")
+  val shape: FlowShape[StreamEntry, StreamEntry] = FlowShape(in, out)
+
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
+    import MetadataProcess.Metadata
+
+    def onPull(): Unit = pull(in)
+
+    val waitForStart = new InHandler {
+      var seenSmaller: Boolean = false
+      override def onPush(): Unit =
+        grab(in) match {
+          case e @ Metadata(entry) =>
+            seenSmaller ||= entry.seqNr < firstSeqNr
+
+            if (entry.seqNr == firstSeqNr) {
+              push(out, e)
+              setHandler(in, transferring)
+            } else if (seenSmaller && entry.seqNr > firstSeqNr)
+              throw new IllegalStateException(s"Gap in journal before ${entry.seqNr}")
+            // else if (!seenSmaller && entry.seqNr > firstSeqNr) // need to wrap first
+            // else if (entry.seqNr < firstSeqNr) // seenSmaller was set, continue
+            else pull(in)
+
+          case AllObjectsReplayed =>
+            if (seenSmaller) { // seq nr not yet available
+              push(out, AllObjectsReplayed)
+              completeStage()
+            } else {
+              seenSmaller = true // when wrapping, we treat the end signal as smallest seqNr
+              pull(in)
+            }
+          case x => throw new IllegalStateException(s"Unexpected element $x")
+        }
+    }
+    val transferring = new InHandler {
+      override def onPush(): Unit = {
+        val el = grab(in)
+        push(out, el)
+        if (el == AllObjectsReplayed) completeStage()
+      }
+    }
+
+    setHandler(out, this)
+    setHandler(in, waitForStart)
+  }
 }
