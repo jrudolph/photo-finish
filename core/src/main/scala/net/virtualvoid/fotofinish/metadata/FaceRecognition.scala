@@ -3,9 +3,11 @@ package metadata
 
 import net.virtualvoid.facerecognition.Face
 import net.virtualvoid.facerecognition.FaceRecognitionLib
+import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
 import spray.json.JsonFormat
 
 import scala.collection.immutable
+import scala.concurrent.Future
 import scala.reflect.ClassTag
 
 object FaceRecognition {
@@ -53,23 +55,28 @@ case class FaceData(
     recognizerSettings: RecognizerSettings,
     faces:              immutable.Seq[FaceInfo]
 )
-
-object FaceDataExtractor extends MetadataExtractor {
-  val NumJitters = 1
-  type EntryT = FaceData
-
-  override def kind: String = "net.virtualvoid.fotofinish.FaceData"
-  override def version: Int = 3
-
-  override def classTag: ClassTag[FaceData] = scala.reflect.classTag[FaceData]
-
-  override protected def extract(file: FileInfo): FaceData = FaceRecognition.detectFaces(file.repoFile.getAbsolutePath, NumJitters)
-  override implicit val metadataFormat: JsonFormat[FaceData] = {
+object FaceData extends MetadataKind.Impl[FaceData]("net.virtualvoid.fotofinish.metadata.FaceData", 1) {
+  implicit val jsonFormat: JsonFormat[FaceData] = {
     import spray.json.DefaultJsonProtocol._
     implicit val rectangleFormat = jsonFormat4(Rectangle)
     implicit val faceFormat = jsonFormat2(FaceInfo)
     implicit val settingsFormat = jsonFormat2(RecognizerSettings)
 
-    jsonFormat2(FaceData)
+    jsonFormat2(FaceData.apply _)
+  }
+}
+
+object FaceDataExtractor extends MetadataExtractor2 {
+  val NumJitters = 1
+  type EntryT = FaceData
+
+  override def kind: String = "net.virtualvoid.fotofinish.metadata.FaceDataExtractor"
+  override def version: Int = 1
+  override def metadataKind: MetadataKind.Aux[FaceData] = FaceData
+
+  override protected def extractEntry(hash: Hash, ctx: ExtractionContext): Future[FaceData] = ctx.accessData(hash) { file =>
+    Future {
+      FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
+    }(ctx.executionContext)
   }
 }

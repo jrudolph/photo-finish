@@ -4,6 +4,7 @@ import java.io.{ File, FileInputStream, FileOutputStream }
 import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
 import akka.actor.ActorSystem
+import akka.http.scaladsl.model.DateTime
 import akka.pattern.after
 import akka.stream._
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
@@ -33,8 +34,8 @@ trait MetadataProcess {
   def version: Int
 
   def initialState: S
-  def processEvent(state: S, event: MetadataEntry): S
-  def sideEffects(state: S, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (S, Vector[SideEffect])
+  def processEvent(state: S, event: MetadataEnvelope): S
+  def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
   def stateFormat: JsonFormat[S]
@@ -45,10 +46,10 @@ trait MetadataProcess {
 object MetadataProcess {
   // TODO: make those work items a proper trait that includes metadata about a work item
   // like expected workload in terms of CPU, IO, etc.
-  type SideEffect = () => Future[Vector[MetadataEntry]]
+  type SideEffect = () => Future[Vector[MetadataEntry2]]
 
   sealed trait StreamEntry
-  final case class Metadata(entry: MetadataEntry) extends StreamEntry
+  final case class Metadata(entry: MetadataEnvelope) extends StreamEntry
   case object AllObjectsReplayed extends StreamEntry
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
@@ -71,6 +72,12 @@ object MetadataProcess {
         }
 
     val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+    val extractionContext = new ExtractionContext {
+      override implicit def executionContext: ExecutionContext = ec
+      override def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
+        // FIXME: easy for now as we expect all hashes to be available as files
+        f(manager.config.fileInfoOf(hash).repoFile)
+    }
 
     val processFlow =
       Flow[StreamEntry]
@@ -114,7 +121,7 @@ object MetadataProcess {
             case AllObjectsReplayed =>
               println(s"[${p.id}] finished replaying")
 
-              val (newState0, sideEffects0) = p.sideEffects(currentState, manager.config.fileInfoOf)
+              val (newState0, sideEffects0) = p.sideEffects(currentState, extractionContext)
 
               // run all waiting executions
               val (newState, sideEffects) = waitingExecutions.foldLeft((newState0, sideEffects0)) { (cur, next) =>
@@ -150,7 +157,7 @@ object MetadataProcess {
             case Metadata(e) =>
               if (e.seqNr == currentSeqNr + 1) {
                 val newState0 = p.processEvent(currentState, e)
-                val (newState1, sideEffects) = p.sideEffects(newState0, manager.config.fileInfoOf)
+                val (newState1, sideEffects) = p.sideEffects(newState0, extractionContext)
                 Effect
                   .changeSeqNr(e.seqNr)
                   .changeState(newState1)
@@ -216,6 +223,10 @@ object MetadataProcess {
         })
 
     journal.source(snapshot.currentSeqNr + 1)
+      .map { e =>
+        println(s"[${p.id}] at [$e]")
+        e
+      }
       .viaMat(processFlow)(Keep.right)
   }
 
@@ -261,7 +272,7 @@ object MetadataProcess {
   }
 
   trait Journal {
-    def newEntrySink: Sink[MetadataEntry, Any]
+    def newEntrySink: Sink[MetadataEntry2, Any]
     def source(fromSeqNr: Long): Source[StreamEntry, Any]
     def shutdown(): Unit
   }
@@ -283,23 +294,31 @@ object MetadataProcess {
       fos.close()
     }
 
-    val liveJournalFlow: Flow[MetadataEntry, MetadataEntry, Any] =
-      Flow[MetadataEntry]
-        .statefulMapConcat[MetadataEntry] { () =>
+    val liveJournalFlow: Flow[MetadataEntry2, MetadataEnvelope, Any] =
+      Flow[MetadataEntry2]
+        .statefulMapConcat[MetadataEnvelope] { () =>
           var lastSeqNo: Long = readSeqNr()
 
-          entry => {
-            lastSeqNo += 1
+          entry =>
+            Try {
+              val thisSeqNr = lastSeqNo + 1
 
-            val entryWithSeqNr = entry.withSeqNr(lastSeqNo)
-            writeSeqNr(lastSeqNo)
-            meta.storeToDefaultDestinations(entryWithSeqNr)
+              val entryWithSeqNr = MetadataEnvelope(thisSeqNr, entry)
+              meta.storeToDefaultDestinations(entryWithSeqNr)
+              // update seqnr last
+              writeSeqNr(thisSeqNr)
+              lastSeqNo += 1
 
-            entryWithSeqNr :: Nil
-          }
+              entryWithSeqNr :: Nil
+            }.recover {
+              case ex =>
+                println(s"[journal] processing new entry [$entry] failed with [${ex.getMessage}], dropping")
+                ex.printStackTrace()
+                Nil
+            }.get
         }
 
-    def readAllEntries(): Future[Source[MetadataEntry, Any]] =
+    def readAllEntries(): Future[Source[MetadataEnvelope, Any]] =
       // add some delay which should help to make sure that live stream is running and connected when we start reading the
       // file
       after(100.millis, system.scheduler) {
@@ -309,7 +328,7 @@ object MetadataProcess {
               .via(Compression.gunzip())
               .via(Framing.delimiter(ByteString("\n"), 1000000))
               .map(_.utf8String)
-              .mapConcat(MetadataManager.readMetadataEntry(_).toVector)
+              .mapConcat(readJournalEntry(manager)(_).toVector)
           else
             Source.empty
         }
@@ -336,19 +355,30 @@ object MetadataProcess {
         .via(new TakeFromWheel(fromSeqNr))
 
     val (liveSink, liveSource) =
-      MergeHub.source[MetadataEntry]
+      MergeHub.source[MetadataEntry2]
         .via(liveJournalFlow)
         .via(killSwitch.flow)
-        .toMat(BroadcastHub.sink[MetadataEntry](2048))(Keep.both)
+        .toMat(BroadcastHub.sink[MetadataEnvelope](2048))(Keep.both)
         .run()
 
     new Journal {
-      override def newEntrySink: Sink[MetadataEntry, Any] = liveSink
+      override def newEntrySink: Sink[MetadataEntry2, Any] = liveSink
       override def source(fromSeqNr: Long): Source[StreamEntry, Any] =
         existingEntriesStartingWith(fromSeqNr)
           .concat(liveSource.map(Metadata))
           .concat(Source.single(ShuttingDown))
       override def shutdown(): Unit = killSwitch.shutdown()
+    }
+  }
+
+  private def readJournalEntry(manager: RepositoryManager)(entry: String): Option[MetadataEnvelope] = {
+    import manager.entryFormat
+    try Some(entry.parseJson.convertTo[MetadataEnvelope])
+    catch {
+      case NonFatal(ex) =>
+        println(s"Couldn't read [$entry] because of ${ex.getMessage}")
+        ex.printStackTrace()
+        None
     }
   }
 }
@@ -361,9 +391,9 @@ object GetAllObjectsProcess extends MetadataProcess {
   def version: Int = 1
 
   def initialState: State = State(Set.empty)
-  def processEvent(state: State, event: MetadataEntry): State =
-    state.copy(knownHashes = state.knownHashes + event.header.forData)
-  def sideEffects(state: State, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  def processEvent(state: State, event: MetadataEnvelope): State =
+    state.copy(knownHashes = state.knownHashes + event.entry.target.hash)
+  def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
     () => handleWithState { state =>
@@ -385,11 +415,11 @@ class IngestionController extends MetadataProcess {
   override def version: Int = 1
   override def initialState: State = State(Map.empty)
 
-  override def processEvent(state: State, event: MetadataEntry): State = event match {
-    case entry if entry.extractor == IngestionDataExtractor => state.add(entry.header.forData, entry.data.asInstanceOf[IngestionData])
-    case _ => state
+  override def processEvent(state: State, event: MetadataEnvelope): State = event.entry match {
+    case entry if entry.kind == IngestionData => state.add(entry.target.hash, entry.value.asInstanceOf[IngestionData])
+    case _                                    => state
   }
-  override def sideEffects(state: State, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): FileInfo => Unit = { fi =>
     def matches(data: IngestionData): Boolean =
@@ -400,8 +430,15 @@ class IngestionController extends MetadataProcess {
 
       val newEntries =
         if (!state.datas.get(fi.hash).exists(_.exists(matches))) {
-          println(s"Injecting [${state.datas.get(fi.hash)}]")
-          IngestionDataExtractor.extractMetadata(fi).toOption.toVector
+          println(s"Injecting [$fi]")
+          //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
+          Vector(MetadataEntry2(
+            Id.Hashed(fi.hash),
+            Vector.empty,
+            IngestionData,
+            CreationInfo(DateTime.now, false, Ingestion),
+            IngestionData.fromFileInfo(fi)
+          ))
         } else {
           println(s"Did not ingest $fi because there already was an entry")
           Vector.empty
@@ -412,11 +449,11 @@ class IngestionController extends MetadataProcess {
   }
   import spray.json._
   import DefaultJsonProtocol._
-  implicit val idFormat = IngestionDataExtractor.metadataFormat
+  implicit val ingestionDataFormat = IngestionData.jsonFormat
   val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor2) extends MetadataProcess {
   sealed trait HashState
   case object Known extends HashState
   case object Scheduled extends HashState
@@ -438,13 +475,15 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
 
   def initialState: S = State(Map.empty)
 
-  def processEvent(state: S, event: MetadataEntry): S = {
-    val hash = event.header.forData
-    if (event.extractor == extractor) {
+  def processEvent(state: S, event: MetadataEnvelope): S = {
+    val hash = event.entry.target.hash
+    if (event.entry.kind == extractor.metadataKind) {
       val newState =
         state.get(hash) match {
-          case Some(Calculated(otherVersion)) => Calculated(otherVersion max event.header.version)
-          case _                              => Calculated(event.header.version)
+          // FIXME: Is `event.entry.kind.version` the version we want to check?
+          // Or do we want to recreate when the extractor version has changed? Probably should ask the extractor about it
+          case Some(Calculated(otherVersion)) => Calculated(otherVersion max event.entry.kind.version)
+          case _                              => Calculated(event.entry.kind.version)
         }
 
       state.set(hash, newState)
@@ -452,18 +491,14 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     else state.set(hash, Known)
   }
 
-  def sideEffects(state: S, fileInfoFor: Hash => FileInfo)(implicit ec: ExecutionContext): (S, Vector[SideEffect]) = {
+  def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
     val toSchedule = state.objectStates.filter(_._2 == Known)
     if (toSchedule.isEmpty) (state, Vector.empty)
     else {
       (
         state.mutateStates(_ ++ toSchedule.mapValues(_ => Scheduled)),
         toSchedule.keys.toVector.map { hash => () =>
-          Future {
-            val res = extractor.extractMetadata(fileInfoFor(hash))
-            println(s"Executing extractor for $hash produced $res")
-            Vector(res.get)
-          }
+          extractor.extract(hash, context).map(Vector(_))(context.executionContext)
         }
       )
     }

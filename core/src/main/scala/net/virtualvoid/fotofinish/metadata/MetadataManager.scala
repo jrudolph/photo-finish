@@ -18,22 +18,22 @@ import spray.json._
 import scala.util.control.NonFatal
 
 object MetadataManager {
-  val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor] = Vector(
+  /*val RegisteredMetadataExtractors: immutable.Seq[MetadataExtractor2] = Vector(
     ExifBaseDataExtractor,
     IngestionDataExtractor,
     ThumbnailExtractor,
     FaceDataExtractor
-  )
+  )*/
 
-  def loadAllEntriesFrom(metadataFile: File): Metadata =
-    Metadata {
+  def loadAllEntriesFrom(metadataFile: File): Metadata = ???
+  /*Metadata {
       if (!metadataFile.exists()) Nil
       else
         Source.fromInputStream(new GZIPInputStream(new FileInputStream(metadataFile))).getLines()
           .flatMap(readMetadataEntry).toVector
-    }
+    }*/
 
-  def readMetadataEntry(entry: String): Option[MetadataEntry] = Try {
+  /*def readMetadataEntry(entry: String): Option[MetadataEntry2] = Try {
     import MetadataJsonProtocol._
     val jsonValue = entry.parseJson
     val header = jsonValue.convertTo[MetadataHeader]
@@ -51,11 +51,23 @@ object MetadataManager {
   }.get
 
   def findExtractor(header: MetadataHeader): Option[MetadataExtractor] =
-    RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)
+    RegisteredMetadataExtractors.find(e => e.kind == header.kind && e.version == header.version)*/
 }
 
 class MetadataManager(manager: RepositoryManager) {
-  private def config: RepositoryConfig = manager.config
+  // FIXME: move somewhere else
+  def storeToDefaultDestinations(envelope: MetadataEnvelope): Unit = {
+    val fos = new FileOutputStream(manager.config.allMetadataFile, true)
+    val out = new GZIPOutputStream(fos)
+    import manager.entryFormat
+    out.write(envelope.toJson.compactPrint.getBytes("utf8"))
+    out.write('\n')
+    out.close()
+    fos.close()
+  }
+  def storeToDestinations(entry: MetadataEntry2, destinations: Seq[File]): Unit = ???
+
+  /*private def config: RepositoryConfig = manager.config
   import MetadataManager._
 
   /**
@@ -110,5 +122,5 @@ class MetadataManager(manager: RepositoryManager) {
     val fos = new FileOutputStream(target, true)
     try fos.write(data)
     finally fos.close()
-  }
+  }*/
 }

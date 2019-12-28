@@ -21,13 +21,31 @@ final case class IngestionData(
 ) {
   def originalFullFilePath: String = originalFilePath + "/" + originalFileName
 }
-object IngestionDataExtractor extends MetadataExtractor {
-  type EntryT = IngestionData
-  override def kind: String = "ingestion-data"
-  override def version: Int = 2
-  override def classTag: ClassTag[IngestionData] = implicitly[ClassTag[IngestionData]]
+object IngestionData extends MetadataKind.Impl[IngestionData]("net.virtualvoid.fotofinish.metadata.IngestionData", 1) {
+  import DefaultJsonProtocol._
+  import MetadataJsonProtocol.dateTimeFormat
+  def jsonFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData.apply _)
 
-  override protected def extract(file: FileInfo): IngestionData = {
+  def fromFileInfo(file: FileInfo): IngestionData = {
+    val original = file.originalFile.getOrElse(throw new RuntimeException("Cannot extract IngestionData when original file info is not available"))
+    IngestionData(
+      original.length(),
+      original.getName,
+      original.getParent,
+      DateTime(Files.readAttributes(original.toPath, classOf[BasicFileAttributes]).creationTime().toMillis),
+      DateTime(original.lastModified()),
+      DateTime(file.repoFile.lastModified())
+    )
+  }
+}
+
+/*object IngestionDataExtractor /*extends MetadataExtractor*/ {
+  type EntryT = IngestionData
+  def kind: String = "ingestion-data"
+  def version: Int = 2
+  def classTag: ClassTag[IngestionData] = implicitly[ClassTag[IngestionData]]
+
+  protected def extract(file: FileInfo): IngestionData = {
     val original = file.originalFile.getOrElse(throw new RuntimeException("Cannot extract IngestionData when original file info is not available"))
     IngestionData(
       original.length(),
@@ -40,9 +58,9 @@ object IngestionDataExtractor extends MetadataExtractor {
   }
   import DefaultJsonProtocol._
   import MetadataJsonProtocol.dateTimeFormat
-  override implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
+  implicit val metadataFormat: JsonFormat[IngestionData] = jsonFormat6(IngestionData)
 
-  override def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry.Aux[IngestionData]]): Boolean =
+  /*def isCurrent(file: FileInfo, entries: immutable.Seq[MetadataEntry.Aux[IngestionData]]): Boolean =
     file.originalFile.forall { original =>
       entries.exists(e =>
         original.getName == e.data.originalFileName &&
@@ -50,8 +68,8 @@ object IngestionDataExtractor extends MetadataExtractor {
       )
     }
 
-  override def isCorrect(entry: MetadataEntry.Aux[IngestionData]): Boolean =
+  def isCorrect(entry: MetadataEntry.Aux[IngestionData]): Boolean =
     // the extractor previously accidentally ran against repo files so we use a simple heuristic here to be able to filter
     // out these entries
-    !entry.data.originalFilePath.contains("/by-sha-512/")
-}
+    !entry.data.originalFilePath.contains("/by-sha-512/")*/
+}*/

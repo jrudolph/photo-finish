@@ -6,7 +6,7 @@ import metadata._
 
 /** An app that collects all metadata from the central storage and repackages it to the central metadata store */
 object MetadataCollector extends App {
-  def loadAllMetadata(): Vector[MetadataEntry] = {
+  def loadAllMetadata(): Vector[MetadataEntry2] = {
     import Settings._
 
     println("Scanning repository")
@@ -31,7 +31,7 @@ object MetadataCollector extends App {
 
     println(s"Found ${entries.size} entries")
     println(s"Sorting by creation time and hash")
-    entries.sortBy(x => (x.header.created.clicks, x.header.forData.asHexString))
+    entries.sortBy(x => (x.creation.created.clicks, x.target.hash.asHexString))
   }
 
   val entries = loadAllMetadata()

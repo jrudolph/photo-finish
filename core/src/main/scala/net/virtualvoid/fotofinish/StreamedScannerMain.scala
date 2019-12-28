@@ -3,18 +3,19 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.{ MergeHub, Sink }
+import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
+import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor2, FaceDataExtractor, MetadataExtractor2, ThumbnailExtractor }
+//import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
 
 import scala.concurrent.duration._
 
 object StreamedScannerMain extends App {
   val parallelism = 8
-  val autoExtractors: Vector[MetadataExtractor] = Vector(
-    ExifBaseDataExtractor,
+  val autoExtractors: Vector[MetadataExtractor2] = Vector(
+    ExifBaseDataExtractor2,
+    ThumbnailExtractor,
     FaceDataExtractor,
-    ThumbnailExtractor
   )
 
   implicit val system = ActorSystem()
@@ -38,6 +39,12 @@ object StreamedScannerMain extends App {
 
   def runProcess(process: MetadataProcess): process.Api =
     MetadataProcess.asSource(process, Settings.manager, journal)
+      .recoverWithRetries(1, {
+        case ex =>
+          println(s"Process [${process.id}] failed with [$ex]")
+          ex.printStackTrace
+          Source.empty
+      })
       .to(executor)
       .run()
 
@@ -46,6 +53,7 @@ object StreamedScannerMain extends App {
 
   system.registerOnTermination(journal.shutdown())
 
+  //journal.source(0).runForeach(println)
   val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
   println(s"Ingesting new files from $dir")
   val is = new Scanner(Settings.config, Settings.manager).scan(dir)

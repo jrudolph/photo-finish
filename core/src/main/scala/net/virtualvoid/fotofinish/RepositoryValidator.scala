@@ -17,13 +17,13 @@ object RepositoryValidator extends App {
     val actualHash = info.hash.hashAlgorithm(info.repoFile)
     require(actualHash == info.hash, s"${info.hash.hashAlgorithm.name} for [${info.repoFile}] was expected to be [${info.hash}] but was [$actualHash]")
   }
-  def checkMetadata(info: FileInfo): Try[Unit] = Try {
+  /*def checkMetadata(info: FileInfo): Try[Unit] = Try {
     val metadataFile = Settings.config.metadataFile(info.hash)
     val entries = MetadataManager.loadAllEntriesFrom(metadataFile)
     require(
       entries.entries.forall(_.header.forData == info.hash),
       s"Metadata file [$metadataFile] for [${info.hash.asHexString}] contains entries for other hashes")
-  }
+  }*/
 
   println("Scanning repository")
   val map = Settings.manager.inodeMap
@@ -31,7 +31,7 @@ object RepositoryValidator extends App {
   println("Sorting by inode")
   val sorted = map.toVector.sortBy(_._1).map(_._2)
 
-  runCheck("Per-file metadata", checkMetadata)
+  //runCheck("Per-file metadata", checkMetadata)
   runCheck("Validating file hashes", checkHash)
 
   def runCheck(what: String, check: FileInfo => Try[Unit]): Unit = {

@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish
 
-import net.virtualvoid.fotofinish.metadata.{ IngestionData, IngestionDataExtractor, Metadata, MetadataEntry, MetadataManager }
+import net.virtualvoid.fotofinish.metadata.{ IngestionData, Metadata, MetadataEntry2, MetadataEnvelope, MetadataManager }
 
 class RepositoryManager(val config: RepositoryConfig) {
   val FileNamePattern = """^[0-9a-f]{128}$""".r
@@ -16,16 +16,16 @@ class RepositoryManager(val config: RepositoryConfig) {
 
   def allRepoFiles(): Iterator[FileInfo] = _allRepoFiles.iterator
 
-  lazy val ingestionEntries: Seq[MetadataEntry.Aux[IngestionData]] = {
+  lazy val ingestionEntries: Seq[MetadataEntry2.Aux[IngestionData]] = ??? /*{
     println("Loading all ingestion data...")
     val res =
       MetadataManager.loadAllEntriesFrom(config.metadataCollectionFor(IngestionDataExtractor))
-        .entries.asInstanceOf[Seq[MetadataEntry.Aux[IngestionData]]]
+        .entries.asInstanceOf[Seq[MetadataEntry2.Aux[IngestionData]]]
     println("Done")
     res
-  }
+  }*/
 
-  private lazy val _allRepoFiles: Vector[FileInfo] = {
+  private lazy val _allRepoFiles: Vector[FileInfo] = ??? /*{
     val entries = ingestionEntries // initializing
     println("Sorting entries...")
     val res =
@@ -35,7 +35,7 @@ class RepositoryManager(val config: RepositoryConfig) {
         .toVector
     println("Done")
     res
-  }
+  }*/
 
   lazy val inodeMap: Map[(Long, Long), FileInfo] =
     scanAllRepoFiles()
@@ -44,4 +44,6 @@ class RepositoryManager(val config: RepositoryConfig) {
 
         (dev, ino) -> info
       }.toMap
+
+  implicit val entryFormat = MetadataEntry2.entryFormat(config.knownMetadataKinds)
 }

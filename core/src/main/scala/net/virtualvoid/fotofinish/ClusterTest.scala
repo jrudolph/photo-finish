@@ -31,18 +31,18 @@ object ClusterTest extends App {
       id.trim -> name.trim
     }.toSeq
 
-  def loadFrom(file: String): immutable.Seq[MetadataEntry.Aux[FaceData]] =
+  def loadFrom(file: String): immutable.Seq[MetadataEntry2.Aux[FaceData]] =
     MetadataManager.loadAllEntriesFrom(new File(file))
       .getEntries[FaceData]
-      .filter(_.data.faces.nonEmpty)
+      .filter(_.value.faces.nonEmpty)
 
   println("Loading faces...")
   val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =
     Vector("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz", "/mnt/hd/fotos/tmp/repo/net.virtualvoid.fotofinish.FaceData-v3.json.gz")
       .flatMap(loadFrom)
       .flatMap { e =>
-        val fileInfo = Settings.manager.config.fileInfoOf(e.header.forData)
-        e.data.faces.zipWithIndex.map {
+        val fileInfo = Settings.manager.config.fileInfoOf(e.target)
+        e.value.faces.zipWithIndex.map {
           case (info, idx) => (fileInfo, info, idx)
         }
       }

@@ -6,7 +6,7 @@ import net.virtualvoid.fotofinish.metadata._
 
 import scala.collection.immutable
 
-object MainScanner extends App {
+/*object MainScanner extends App {
 
   import Settings._
 
@@ -47,5 +47,5 @@ object MainScanner extends App {
 
   println("Updating by-original-name folder")
   Relinker.createDirStructure(manager)(Relinker.byOriginalFileName(manager))
-}
+}*/
 
