@@ -19,7 +19,7 @@ object Thumbnail extends MetadataKind.Impl[Thumbnail]("net.virtualvoid.fotofinis
   import MetadataJsonProtocol.byteStringFormat
   implicit def jsonFormat: JsonFormat[Thumbnail] = jsonFormat3(Thumbnail.apply _)
 }
-object ThumbnailExtractor extends MetadataExtractor2 {
+object ThumbnailExtractor extends MetadataExtractor {
   type EntryT = Thumbnail
 
   def kind: String = "thumbnail"

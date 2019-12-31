@@ -6,7 +6,7 @@ import metadata._
 
 /** An app that collects all metadata from the central storage and repackages it to the central metadata store */
 object MetadataCollector extends App {
-  def loadAllMetadata(): Vector[MetadataEntry2] = {
+  def loadAllMetadata(): Vector[MetadataEntry] = {
     import Settings._
 
     println("Scanning repository")

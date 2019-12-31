@@ -3,7 +3,7 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
-import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry2, MetadataExtractor2, MetadataKind }
+import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataExtractor, MetadataKind }
 
 final case class RepositoryConfig(
     storageDir:         File,
@@ -45,10 +45,10 @@ final case class RepositoryConfig(
       .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
   }
 
-  def destinationsFor(entry: MetadataEntry2): Seq[File] =
+  def destinationsFor(entry: MetadataEntry): Seq[File] =
     metadataFile(entry.target) +: centralDestinationsFor(entry)
 
-  def centralDestinationsFor(entry: MetadataEntry2): Seq[File] =
+  def centralDestinationsFor(entry: MetadataEntry): Seq[File] =
     Seq(
       allMetadataFile,
       metadataCollectionFor(entry.kind)

@@ -31,7 +31,7 @@ object ClusterTest extends App {
       id.trim -> name.trim
     }.toSeq
 
-  def loadFrom(file: String): immutable.Seq[MetadataEntry2.Aux[FaceData]] =
+  def loadFrom(file: String): immutable.Seq[MetadataEntry.Aux[FaceData]] =
     MetadataManager.loadAllEntriesFrom(new File(file))
       .getEntries[FaceData]
       .filter(_.value.faces.nonEmpty)

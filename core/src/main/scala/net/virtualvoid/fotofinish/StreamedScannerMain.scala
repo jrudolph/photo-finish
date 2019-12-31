@@ -5,15 +5,14 @@ import java.io.File
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.MetadataProcess.SideEffect
-import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor2, FaceDataExtractor, MetadataExtractor2, ThumbnailExtractor }
-//import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
+import net.virtualvoid.fotofinish.metadata.{ ExifBaseDataExtractor, FaceDataExtractor, MetadataExtractor, ThumbnailExtractor }
 
 import scala.concurrent.duration._
 
 object StreamedScannerMain extends App {
   val parallelism = 8
-  val autoExtractors: Vector[MetadataExtractor2] = Vector(
-    ExifBaseDataExtractor2,
+  val autoExtractors: Vector[MetadataExtractor] = Vector(
+    ExifBaseDataExtractor,
     ThumbnailExtractor,
     FaceDataExtractor,
   )

@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish
 
-import net.virtualvoid.fotofinish.metadata.{ IngestionData, Metadata, MetadataEntry2, MetadataEnvelope, MetadataManager }
+import net.virtualvoid.fotofinish.metadata.{ IngestionData, Metadata, MetadataEntry, MetadataManager }
 
 class RepositoryManager(val config: RepositoryConfig) {
   val FileNamePattern = """^[0-9a-f]{128}$""".r
@@ -16,7 +16,7 @@ class RepositoryManager(val config: RepositoryConfig) {
 
   def allRepoFiles(): Iterator[FileInfo] = _allRepoFiles.iterator
 
-  lazy val ingestionEntries: Seq[MetadataEntry2.Aux[IngestionData]] = ??? /*{
+  lazy val ingestionEntries: Seq[MetadataEntry.Aux[IngestionData]] = ??? /*{
     println("Loading all ingestion data...")
     val res =
       MetadataManager.loadAllEntriesFrom(config.metadataCollectionFor(IngestionDataExtractor))
@@ -45,5 +45,5 @@ class RepositoryManager(val config: RepositoryConfig) {
         (dev, ino) -> info
       }.toMap
 
-  implicit val entryFormat = MetadataEntry2.entryFormat(config.knownMetadataKinds)
+  implicit val entryFormat = MetadataEntry.entryFormat(config.knownMetadataKinds)
 }

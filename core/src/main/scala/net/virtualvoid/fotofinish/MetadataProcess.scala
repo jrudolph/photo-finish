@@ -46,7 +46,7 @@ trait MetadataProcess {
 object MetadataProcess {
   // TODO: make those work items a proper trait that includes metadata about a work item
   // like expected workload in terms of CPU, IO, etc.
-  type SideEffect = () => Future[Vector[MetadataEntry2]]
+  type SideEffect = () => Future[Vector[MetadataEntry]]
 
   sealed trait StreamEntry
   final case class Metadata(entry: MetadataEnvelope) extends StreamEntry
@@ -272,7 +272,7 @@ object MetadataProcess {
   }
 
   trait Journal {
-    def newEntrySink: Sink[MetadataEntry2, Any]
+    def newEntrySink: Sink[MetadataEntry, Any]
     def source(fromSeqNr: Long): Source[StreamEntry, Any]
     def shutdown(): Unit
   }
@@ -294,8 +294,8 @@ object MetadataProcess {
       fos.close()
     }
 
-    val liveJournalFlow: Flow[MetadataEntry2, MetadataEnvelope, Any] =
-      Flow[MetadataEntry2]
+    val liveJournalFlow: Flow[MetadataEntry, MetadataEnvelope, Any] =
+      Flow[MetadataEntry]
         .statefulMapConcat[MetadataEnvelope] { () =>
           var lastSeqNo: Long = readSeqNr()
 
@@ -355,14 +355,14 @@ object MetadataProcess {
         .via(new TakeFromWheel(fromSeqNr))
 
     val (liveSink, liveSource) =
-      MergeHub.source[MetadataEntry2]
+      MergeHub.source[MetadataEntry]
         .via(liveJournalFlow)
         .via(killSwitch.flow)
         .toMat(BroadcastHub.sink[MetadataEnvelope](2048))(Keep.both)
         .run()
 
     new Journal {
-      override def newEntrySink: Sink[MetadataEntry2, Any] = liveSink
+      override def newEntrySink: Sink[MetadataEntry, Any] = liveSink
       override def source(fromSeqNr: Long): Source[StreamEntry, Any] =
         existingEntriesStartingWith(fromSeqNr)
           .concat(liveSource.map(Metadata))
@@ -432,7 +432,7 @@ class IngestionController extends MetadataProcess {
         if (!state.datas.get(fi.hash).exists(_.exists(matches))) {
           println(s"Injecting [$fi]")
           //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
-          Vector(MetadataEntry2(
+          Vector(MetadataEntry(
             Id.Hashed(fi.hash),
             Vector.empty,
             IngestionData,
@@ -453,7 +453,7 @@ class IngestionController extends MetadataProcess {
   val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor2) extends MetadataProcess {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
   sealed trait HashState
   case object Known extends HashState
   case object Scheduled extends HashState

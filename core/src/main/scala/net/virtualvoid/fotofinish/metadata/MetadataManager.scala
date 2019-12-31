@@ -65,7 +65,7 @@ class MetadataManager(manager: RepositoryManager) {
     out.close()
     fos.close()
   }
-  def storeToDestinations(entry: MetadataEntry2, destinations: Seq[File]): Unit = ???
+  def storeToDestinations(entry: MetadataEntry, destinations: Seq[File]): Unit = ???
 
   /*private def config: RepositoryConfig = manager.config
   import MetadataManager._

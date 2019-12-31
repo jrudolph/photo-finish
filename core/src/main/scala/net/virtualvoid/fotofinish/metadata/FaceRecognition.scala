@@ -1,14 +1,11 @@
 package net.virtualvoid.fotofinish
 package metadata
 
-import net.virtualvoid.facerecognition.Face
-import net.virtualvoid.facerecognition.FaceRecognitionLib
-import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
+import net.virtualvoid.facerecognition.{ Face, FaceRecognitionLib }
 import spray.json.JsonFormat
 
 import scala.collection.immutable
 import scala.concurrent.Future
-import scala.reflect.ClassTag
 
 object FaceRecognition {
   val MaxFaces = 100
@@ -66,7 +63,7 @@ object FaceData extends MetadataKind.Impl[FaceData]("net.virtualvoid.fotofinish.
   }
 }
 
-object FaceDataExtractor extends MetadataExtractor2 {
+object FaceDataExtractor extends MetadataExtractor {
   val NumJitters = 1
   type EntryT = FaceData
 
