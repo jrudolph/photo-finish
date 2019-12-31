@@ -32,9 +32,11 @@ object ClusterTest extends App {
     }.toSeq
 
   def loadFrom(file: String): immutable.Seq[MetadataEntry.Aux[FaceData]] =
-    MetadataManager.loadAllEntriesFrom(new File(file))
+    // FIXME: needs reimplementation to use process to access only all face data
+    /*MetadataManager.loadAllEntriesFrom(new File(file))
       .getEntries[FaceData]
-      .filter(_.value.faces.nonEmpty)
+      .filter(_.value.faces.nonEmpty)*/
+    ???
 
   println("Loading faces...")
   val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =

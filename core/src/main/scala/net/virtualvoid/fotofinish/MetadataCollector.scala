@@ -25,7 +25,9 @@ object MetadataCollector extends App {
         .flatMap { fi =>
           val idx = read.incrementAndGet()
           if (idx % 1000 == 0) println(s"$idx/${sorted.size}")
-          MetadataManager.loadAllEntriesFrom(config.metadataFile(fi.hash)).entries
+          // FIXME: needs reimplementation
+          // MetadataManager.loadAllEntriesFrom(config.metadataFile(fi.hash)).entries
+          Vector.empty[MetadataEntry]
         }
         .seq
 
@@ -41,6 +43,7 @@ object MetadataCollector extends App {
     .foreach {
       case (e, idx) =>
         if (idx % 10000 == 0) println(s"$idx/${entries.size}")
-        Settings.metadataStore.storeToDestinations(e, Settings.config.centralDestinationsFor(e))
+      // FIXME: data import should use process to inject data
+      // Settings.metadataStore.storeToDestinations(e, Settings.config.centralDestinationsFor(e))
     }
 }

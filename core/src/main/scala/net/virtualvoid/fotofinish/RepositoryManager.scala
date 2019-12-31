@@ -1,12 +1,12 @@
 package net.virtualvoid.fotofinish
 
-import net.virtualvoid.fotofinish.metadata.{ IngestionData, Metadata, MetadataEntry, MetadataManager }
+import net.virtualvoid.fotofinish.metadata.{ IngestionData, Metadata, MetadataEntry }
 
 class RepositoryManager(val config: RepositoryConfig) {
   val FileNamePattern = """^[0-9a-f]{128}$""".r
   import Scanner._
 
-  def metadataFor(hash: Hash): Metadata = MetadataManager.loadAllEntriesFrom(config.metadataFile(hash))
+  def metadataFor(hash: Hash): Metadata = ??? // FIXME: MetadataManager.loadAllEntriesFrom(config.metadataFile(hash))
 
   def scanAllRepoFiles(): Iterator[FileInfo] =
     Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))

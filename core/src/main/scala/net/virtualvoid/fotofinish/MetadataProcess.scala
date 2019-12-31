@@ -281,7 +281,7 @@ object MetadataProcess {
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def journal(manager: RepositoryManager, meta: MetadataManager)(implicit system: ActorSystem): Journal = {
+  def journal(manager: RepositoryManager)(implicit system: ActorSystem): Journal = {
     import system.dispatcher
 
     val killSwitch = KillSwitches.shared("kill-journal")
@@ -304,7 +304,7 @@ object MetadataProcess {
               val thisSeqNr = lastSeqNo + 1
 
               val entryWithSeqNr = MetadataEnvelope(thisSeqNr, entry)
-              meta.storeToDefaultDestinations(entryWithSeqNr)
+              writeJournalEntry(manager, entryWithSeqNr)
               // update seqnr last
               writeSeqNr(thisSeqNr)
               lastSeqNo += 1
@@ -328,7 +328,7 @@ object MetadataProcess {
               .via(Compression.gunzip())
               .via(Framing.delimiter(ByteString("\n"), 1000000))
               .map(_.utf8String)
-              .mapConcat(readJournalEntry(manager)(_).toVector)
+              .mapConcat(readJournalEntry(manager, _).toVector)
           else
             Source.empty
         }
@@ -371,7 +371,7 @@ object MetadataProcess {
     }
   }
 
-  private def readJournalEntry(manager: RepositoryManager)(entry: String): Option[MetadataEnvelope] = {
+  private def readJournalEntry(manager: RepositoryManager, entry: String): Option[MetadataEnvelope] = {
     import manager.entryFormat
     try Some(entry.parseJson.convertTo[MetadataEnvelope])
     catch {
@@ -380,6 +380,16 @@ object MetadataProcess {
         ex.printStackTrace()
         None
     }
+  }
+
+  private def writeJournalEntry(manager: RepositoryManager, envelope: MetadataEnvelope): Unit = {
+    val fos = new FileOutputStream(manager.config.allMetadataFile, true)
+    val out = new GZIPOutputStream(fos)
+    import manager.entryFormat
+    out.write(envelope.toJson.compactPrint.getBytes("utf8"))
+    out.write('\n')
+    out.close()
+    fos.close()
   }
 }
 

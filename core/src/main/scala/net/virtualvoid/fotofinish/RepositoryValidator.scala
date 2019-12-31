@@ -2,8 +2,6 @@ package net.virtualvoid.fotofinish
 
 import java.util.concurrent.atomic.AtomicInteger
 
-import net.virtualvoid.fotofinish.metadata.MetadataManager
-
 import scala.util.Try
 
 object RepositoryValidator extends App {

@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.{ ExifBaseData, FaceData, IngestionData, MetadataKind, MetadataManager, Thumbnail }
+import net.virtualvoid.fotofinish.metadata.{ ExifBaseData, FaceData, IngestionData, MetadataKind, Thumbnail }
 
 object Settings {
   /*val repo = new File("/home/johannes/Fotos/tmp/repo")
@@ -28,5 +28,4 @@ object Settings {
       knownMetadataKinds)
 
   val manager = new RepositoryManager(config)
-  val metadataStore = new MetadataManager(manager)
 }

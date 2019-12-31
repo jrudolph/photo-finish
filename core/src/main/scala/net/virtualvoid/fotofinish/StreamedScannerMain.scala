@@ -21,7 +21,7 @@ object StreamedScannerMain extends App {
   import system.dispatcher
 
   // setup main stream
-  val journal = MetadataProcess.journal(Settings.manager, Settings.metadataStore)
+  val journal = MetadataProcess.journal(Settings.manager)
 
   /* val queue =
     Source.queue[MetadataEntry](1000, OverflowStrategy.dropNew)
