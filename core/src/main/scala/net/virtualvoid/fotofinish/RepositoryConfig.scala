@@ -2,15 +2,16 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataExtractor, MetadataKind }
 
 final case class RepositoryConfig(
-    storageDir:         File,
-    metadataDir:        File,
-    linkRootDir:        File,
-    hashAlgorithm:      HashAlgorithm,
-    knownMetadataKinds: Set[MetadataKind]
+    storageDir:          File,
+    metadataDir:         File,
+    linkRootDir:         File,
+    hashAlgorithm:       HashAlgorithm,
+    knownMetadataKinds:  Set[MetadataKind],
+    autoExtractors:      Set[MetadataExtractor],
+    executorParallelism: Int
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
@@ -53,4 +54,6 @@ final case class RepositoryConfig(
       allMetadataFile,
       metadataCollectionFor(entry.kind)
     )
+
+  implicit val entryFormat = MetadataEntry.entryFormat(knownMetadataKinds)
 }

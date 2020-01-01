@@ -11,11 +11,14 @@ import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, 
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
+import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
+import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
 import scala.annotation.tailrec
 import scala.collection.immutable
+import scala.collection.immutable.{ TreeMap, TreeSet }
 import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, Future, Promise }
 import scala.language.implicitConversions
@@ -24,6 +27,10 @@ import scala.util.{ Failure, Success, Try }
 
 trait HandleWithStateFunc[S] {
   def apply[T](f: S => (S, Vector[SideEffect], T)): Future[T]
+  def access[T](f: S => T): Future[T] =
+    apply { state =>
+      (state, Vector.empty, f(state))
+    }
 }
 
 trait MetadataProcess {
@@ -38,7 +45,7 @@ trait MetadataProcess {
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
-  def stateFormat: JsonFormat[S]
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S]
   /** Allows to prepare state loaded from snapshot */
   def initializeStateSnapshot(state: S): S = state
 }
@@ -241,7 +248,7 @@ object MetadataProcess {
     val file = processSnapshotFile(p, manager)
     val os = new GZIPOutputStream(new FileOutputStream(file))
     try {
-      implicit val sFormat: JsonFormat[p.S] = p.stateFormat
+      implicit val sFormat: JsonFormat[p.S] = p.stateFormat(manager.config.entryFormat)
       os.write(snapshot.toJson.compactPrint.getBytes("utf8"))
     } finally os.close()
   }
@@ -251,7 +258,7 @@ object MetadataProcess {
       val fis = new FileInputStream(file)
       try {
         val is = new GZIPInputStream(fis)
-        implicit val sFormat: JsonFormat[p.S] = p.stateFormat
+        implicit val sFormat: JsonFormat[p.S] = p.stateFormat(manager.config.entryFormat)
         Try(io.Source.fromInputStream(is).mkString.parseJson.convertTo[Snapshot[p.S]])
           .map { s =>
             require(s.processId == p.id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [${p.id}].")
@@ -372,7 +379,7 @@ object MetadataProcess {
   }
 
   private def readJournalEntry(manager: RepositoryManager, entry: String): Option[MetadataEnvelope] = {
-    import manager.entryFormat
+    import manager.config.entryFormat
     try Some(entry.parseJson.convertTo[MetadataEnvelope])
     catch {
       case NonFatal(ex) =>
@@ -385,7 +392,7 @@ object MetadataProcess {
   private def writeJournalEntry(manager: RepositoryManager, envelope: MetadataEnvelope): Unit = {
     val fos = new FileOutputStream(manager.config.allMetadataFile, true)
     val out = new GZIPOutputStream(fos)
-    import manager.entryFormat
+    import manager.config.entryFormat
     out.write(envelope.toJson.compactPrint.getBytes("utf8"))
     out.write('\n')
     out.close()
@@ -411,10 +418,10 @@ object GetAllObjectsProcess extends MetadataProcess {
     }
 
   import spray.json.DefaultJsonProtocol._
-  lazy val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
-class IngestionController extends MetadataProcess {
+object IngestionController extends MetadataProcess {
   case class State(datas: Map[Hash, Vector[IngestionData]]) {
     def add(hash: Hash, data: IngestionData): State =
       copy(datas = datas + (hash -> (datas.getOrElse(hash, Vector.empty) :+ data)))
@@ -460,7 +467,7 @@ class IngestionController extends MetadataProcess {
   import spray.json._
   import DefaultJsonProtocol._
   implicit val ingestionDataFormat = IngestionData.jsonFormat
-  val stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
@@ -536,13 +543,56 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
       case c: Calculated => c.toJson + ("type" -> JsString("Calculated"))
     }
   }
-  def stateFormat: JsonFormat[State] = jsonFormat1(State.apply)
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 
   override def initializeStateSnapshot(state: State): State =
     state.mutateStates(_.mapValues {
       case Scheduled => Known // throw away markers that a calculation is already in process
       case x         => x
     })
+}
+
+trait MetadataApi {
+  def metadataFor(id: Id): Future[Metadata]
+  def knownObjects(): Future[TreeSet[Id]]
+}
+
+object PerObjectMetadataCollector extends MetadataProcess {
+  case class State(
+      metadata: TreeMap[Hash, Metadata]
+  ) {
+    def handle(entry: MetadataEntry): State = metadata.get(entry.target.hash) match {
+      case Some(Metadata(existing)) =>
+        State(metadata + (entry.target.hash -> Metadata(existing :+ entry)))
+      case None => State(metadata + (entry.target.hash -> Metadata(Vector(entry))))
+    }
+  }
+
+  override type S = State
+  override type Api = MetadataApi
+
+  override def version: Int = 1
+
+  override def initialState: State = State(TreeMap.empty)
+  override def processEvent(state: State, event: MetadataEnvelope): State = state.handle(event.entry)
+  override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataApi =
+    new MetadataApi {
+      def metadataFor(id: Id): Future[Metadata] =
+        handleWithState.access { state => state.metadata.getOrElse(id.hash, Metadata(Vector.empty)) }
+      override def knownObjects(): Future[TreeSet[Id]] =
+        handleWithState.access { state => TreeSet(state.metadata.keys.map(Hashed(_): Id).toVector: _*) }
+    }
+
+  import spray.json.DefaultJsonProtocol._
+  implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
+    JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))
+
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
+    implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
+
+    jsonFormat1(State.apply _)
+  }
 }
 
 /**

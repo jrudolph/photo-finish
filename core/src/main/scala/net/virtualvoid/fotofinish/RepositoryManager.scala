@@ -44,6 +44,4 @@ class RepositoryManager(val config: RepositoryConfig) {
 
         (dev, ino) -> info
       }.toMap
-
-  implicit val entryFormat = MetadataEntry.entryFormat(config.knownMetadataKinds)
 }

@@ -1,7 +1,6 @@
 package net.virtualvoid.fotofinish.util
 
-import spray.json.JsObject
-import spray.json.JsValue
+import spray.json._
 
 object JsonExtra {
   implicit class RichJsValue(val jsValue: JsValue) extends AnyVal {
@@ -12,5 +11,16 @@ object JsonExtra {
     def field(name: String): JsValue =
       jsValue.asJsObject.fields(name)
   }
+
+  trait DeriveFormat[T] {
+    def apply[U](toT: U => T, fromT: T => U)(implicit tFormat: JsonFormat[T]): JsonFormat[U]
+  }
+  def deriveFormatFrom[T]: DeriveFormat[T] =
+    new DeriveFormat[T] {
+      override def apply[U](toT: U => T, fromT: T => U)(implicit tFormat: JsonFormat[T]): JsonFormat[U] = new JsonFormat[U] {
+        def read(json: JsValue): U = fromT(json.convertTo[T])
+        def write(obj: U): JsValue = toT(obj).toJson
+      }
+    }
 }
 

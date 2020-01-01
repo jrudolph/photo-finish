@@ -7,22 +7,23 @@ import akka.http.scaladsl.model.HttpEntity
 import akka.http.scaladsl.model.MediaTypes
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.model.Uri
-import akka.http.scaladsl.server.PathMatcher
-import akka.http.scaladsl.server.PathMatcher1
-import akka.http.scaladsl.server.Route
-
+import akka.http.scaladsl.server.{ ExceptionHandler, PathMatcher, PathMatcher1, Route }
 import play.twirl.api.Html
-
 import util.ImageTools
 import html._
 import metadata._
+import net.virtualvoid.fotofinish.metadata.Id.Hashed
+
+import scala.concurrent.Future
+import scala.util.control.NonFatal
 
 object Server extends App {
   implicit val system = ActorSystem()
   import system.dispatcher
 
+  val app = MetadataApp(Settings.config)
   val binding = Http().bindAndHandle(
-    ServerRoutes.route(Settings.manager),
+    ServerRoutes.route(app),
     "localhost", 8654
   )
   binding.onComplete { res =>
@@ -31,67 +32,69 @@ object Server extends App {
 }
 
 object ServerRoutes {
-  def route(manager: RepositoryManager): Route =
-    new ServerRoutes(manager).main
+  def route(app: MetadataApp): Route =
+    new ServerRoutes(app).main
 }
 
-private[web] class ServerRoutes(manager: RepositoryManager) {
+private[web] class ServerRoutes(app: MetadataApp) {
+  import app.executionContext
   import TwirlSupport._
   import akka.http.scaladsl.server.Directives._
 
   lazy val main: Route =
-    concat(
-      pathPrefix("images")(images),
-      pathPrefix("gallery")(gallery),
-      auxiliary,
-    )
+    handleExceptions(exceptionHandler) {
+      concat(
+        pathPrefix("images")(images),
+        pathPrefix("gallery")(gallery),
+        auxiliary,
+      )
+    }
 
   lazy val images: Route =
     concat(
       pathPrefix("sha512") {
         concat(
           pathPrefix(FileInfoBySha512Hash) { fileInfo =>
-            import fileInfo.hash
-            val meta = manager.metadataFor(hash)
-
-            concat(
-              path("raw") {
-                getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
-              },
-              path("oriented") {
-                complete {
-                  HttpEntity(
-                    MediaTypes.`image/jpeg`,
-                    ImageTools.correctOrientation(meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
-                  )
-                }
-              },
-              path("thumbnail") {
-                complete {
-                  meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
-                    HttpEntity(MediaTypes.`image/jpeg`, thumbData)
-                  }
-                }
-              },
-              path("face" / IntNumber) { i =>
-                complete {
-                  meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+            onSuccess(app.metadataFor(fileInfo.id)) { meta =>
+              concat(
+                path("raw") {
+                  getFromFile(fileInfo.repoFile, MediaTypes.`image/jpeg`)
+                },
+                path("oriented") {
+                  complete {
                     HttpEntity(
                       MediaTypes.`image/jpeg`,
-                      ImageTools.crop(face.rectangle)(fileInfo.repoFile))
+                      ImageTools.correctOrientation(meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
+                    )
+                  }
+                },
+                path("thumbnail") {
+                  complete {
+                    meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
+                      HttpEntity(MediaTypes.`image/jpeg`, thumbData)
+                    }
+                  }
+                },
+                path("face" / IntNumber) { i =>
+                  complete {
+                    meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+                      HttpEntity(
+                        MediaTypes.`image/jpeg`,
+                        ImageTools.crop(face.rectangle)(fileInfo.repoFile))
+                    }
+                  }
+                },
+                redirectToTrailingSlashIfMissing(StatusCodes.Found) {
+                  pathSingleSlash {
+                    complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
                   }
                 }
-              },
-              redirectToTrailingSlashIfMissing(StatusCodes.Found) {
-                pathSingleSlash {
-                  complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
-                }
-              }
-            )
+              )
+            }
           },
           pathPrefix(HashPrefix) { prefix =>
             extractUri { uri =>
-              manager.config.fileInfoByHashPrefix(prefix) match {
+              onSuccess(app.completeIdPrefix(Id.generic("sha-512", prefix))) {
                 case Some(fileInfo) =>
                   val newUri = uri.withPath(Uri.Path(uri.path.toString.replace(prefix, fileInfo.hash.asHexString)))
                   redirect(newUri, StatusCodes.Found)
@@ -106,7 +109,15 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
 
   lazy val gallery: Route =
     get {
-      complete(Gallery(manager.allRepoFiles().drop(1000).take(100).flatMap(imageDataForFileInfo).toVector))
+      val imageDatasF =
+        for {
+          objs <- app.knownObjects()
+          imageDatas <- Future.traverse(objs.take(100).toVector)(imageDataForId).map(_.toSeq.flatten)
+        } yield imageDatas
+
+      onSuccess(imageDatasF) { imageDatas =>
+        complete(Gallery(imageDatas))
+      }
     }
 
   lazy val auxiliary: Route =
@@ -116,7 +127,7 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
 
   val FileInfoBySha512Hash: PathMatcher1[FileInfo] =
     PathMatcher(s"[0-9a-fA-F]{${HashAlgorithm.Sha512.hexStringLength}}".r).map { hash =>
-      manager.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
+      app.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
     }
 
   def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
@@ -144,17 +155,22 @@ private[web] class ServerRoutes(manager: RepositoryManager) {
       )
   }
 
-  def imageDataForFileInfo(fi: FileInfo): Option[GalleriaImageData] = {
-    val imageBase = s"/images/sha512/${fi.hash.asHexString}/"
+  def imageDataForId(id: Id): Future[Option[GalleriaImageData]] = app.metadataFor(id).map { meta =>
+    val imageBase = s"/images/sha512/${id.hash.asHexString}/"
 
-    val meta = manager.metadataFor(fi.hash)
     import MetadataShortcuts._
 
-    val description = s"${fi.hash.asHexString.take(10)} ${DateTaken(meta).getOrElse("")} ${CameraModel(meta).getOrElse("")}"
+    val description = s"${id.hash.asHexString.take(10)} ${DateTaken(meta).getOrElse("")} ${CameraModel(meta).getOrElse("")}"
 
     Thumbnail(meta).map { _ =>
       GalleriaImageData(imageBase + "oriented", imageBase + "thumbnail", imageBase, description)
     }
+  }
+
+  def exceptionHandler: ExceptionHandler = ExceptionHandler {
+    case NonFatal(ex) =>
+      ex.printStackTrace()
+      throw ex
   }
 }
 

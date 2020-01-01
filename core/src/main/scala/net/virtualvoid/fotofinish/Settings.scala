@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.{ ExifBaseData, FaceData, IngestionData, MetadataKind, Thumbnail }
+import net.virtualvoid.fotofinish.metadata.{ ExifBaseData, ExifBaseDataExtractor, FaceData, FaceDataExtractor, IngestionData, MetadataExtractor, MetadataKind, Thumbnail, ThumbnailExtractor }
 
 object Settings {
   /*val repo = new File("/home/johannes/Fotos/tmp/repo")
@@ -19,13 +19,21 @@ object Settings {
     FaceData,
   )
 
+  val autoExtractors: Set[MetadataExtractor] = Set(
+    ExifBaseDataExtractor,
+    ThumbnailExtractor,
+  //FaceDataExtractor,
+  )
+
   val config =
     RepositoryConfig(
       repo,
       meta,
       linkDir,
       HashAlgorithm.Sha512,
-      knownMetadataKinds)
+      knownMetadataKinds,
+      autoExtractors,
+      8)
 
   val manager = new RepositoryManager(config)
 }

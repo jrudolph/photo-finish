@@ -67,27 +67,42 @@ object CreationInfo {
   implicit val dtF: JsonFormat[DateTime] = MetadataJsonProtocol.dateTimeFormat
   implicit val creationInfo: JsonFormat[CreationInfo] = jsonFormat3(CreationInfo.apply _)
 }
-sealed trait Id
+sealed trait Id {
+  def kind: String
+  def stringRepr: String
+
+  def idString: String = s"$kind:$stringRepr"
+}
 object Id {
-  final case class Hashed(hash: Hash) extends Id
+  final case class Hashed(hash: Hash) extends Id {
+    def kind: String = hash.hashAlgorithm.name
+    def stringRepr: String = hash.asHexString
+  }
   // final case class ByUUID(uuid: UUID) extends Id
+
+  def generic(_kind: String, repr: String): Id =
+    new Id {
+      def kind: String = _kind
+      def stringRepr: String = repr
+    }
 
   import DefaultJsonProtocol._
   implicit def hashedFormat: JsonFormat[Hashed] = jsonFormat1(Hashed.apply _)
   implicit def idFormat: JsonFormat[Id] = new JsonFormat[Id] {
-    override def write(obj: Id): JsValue = obj match {
-      case h: Hashed => h.toJson + ("type" -> JsString("hashed"))
+    override def write(obj: Id): JsValue = JsString(obj.idString)
+    override def read(json: JsValue): Id = json match {
+      case JsString(x) =>
+        x.split(":") match {
+          case Array("sha-512", data) => Hashed(Hash.fromString(HashAlgorithm.Sha512, data))
+        }
+      case x => MetadataJsonProtocol.error(s"Cannot read Id from $x")
     }
-    override def read(json: JsValue): Id =
-      json.asJsObject.field("type") match {
-        case JsString("hashed") => json.convertTo[Hashed]
-        case x                  => MetadataJsonProtocol.error(s"Cannot read Id from $x")
-      }
   }
 
   implicit class IdExtension(val id: Id) extends AnyVal {
     def hash: Hash = id.asInstanceOf[Hashed].hash
   }
+  implicit val idOrdering: Ordering[Id] = Ordering.by(_.idString)
 }
 
 trait MetadataEntry {
