@@ -20,12 +20,14 @@ object Settings {
     ExifBaseData,
     Thumbnail,
     FaceData,
+    HashData,
   )
 
   val autoExtractors: Set[MetadataExtractor] = Set(
     FileTypeDataExtractor.instance,
     ExifBaseDataExtractor.instance,
     ThumbnailExtractor.instance,
+    HashDataExtractor.instance,
     FaceDataExtractor.instance,
   )
 
