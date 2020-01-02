@@ -7,8 +7,8 @@ import java.util.Base64
 import akka.http.scaladsl.model.DateTime
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
+import net.virtualvoid.fotofinish.util.JsonExtra._
 import spray.json._
-import util.JsonExtra._
 
 import scala.collection.immutable
 import scala.concurrent.{ ExecutionContext, Future }
@@ -213,6 +213,29 @@ trait MetadataExtractor {
           value))(ctx.executionContext)
 
   protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT]
+}
+object MetadataExtractor {
+  def apply(_kind: String, _version: Int, metadata: MetadataKind)(f: (Hash, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
+    new MetadataExtractor {
+      type EntryT = metadata.T
+      def kind: String = _kind
+      def version: Int = _version
+      def metadataKind: MetadataKind.Aux[EntryT] = metadata
+      def dependsOn: Vector[MetadataKind] = Vector.empty
+      protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT] =
+        f(hash, ctx)
+    }
+
+  def dep1(_kind: String, _version: Int, metadata: MetadataKind, dep1: MetadataKind)(f: (Hash, dep1.T, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
+    new MetadataExtractor {
+      type EntryT = metadata.T
+      def kind: String = _kind
+      def version: Int = _version
+      def metadataKind: MetadataKind.Aux[EntryT] = metadata
+      def dependsOn: Vector[MetadataKind] = Vector(dep1)
+      protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT] =
+        f(hash, dependencies(0).value.asInstanceOf[dep1.T], ctx)
+    }
 }
 
 object MetadataJsonProtocol {
