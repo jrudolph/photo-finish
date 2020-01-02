@@ -1,8 +1,5 @@
 package net.virtualvoid.fotofinish.metadata
-import net.virtualvoid.fotofinish.Hash
 import spray.json.JsonFormat
-
-import scala.concurrent.Future
 
 final case class FileTypeData(
     extension: String,

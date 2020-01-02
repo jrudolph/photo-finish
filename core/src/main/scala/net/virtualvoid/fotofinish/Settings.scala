@@ -22,9 +22,9 @@ object Settings {
 
   val autoExtractors: Set[MetadataExtractor] = Set(
     FileTypeDataExtractor.instance,
-    ExifBaseDataExtractor,
-    ThumbnailExtractor,
-  //FaceDataExtractor,
+    ExifBaseDataExtractor.instance,
+    ThumbnailExtractor.instance,
+    FaceDataExtractor.instance,
   )
 
   val config =

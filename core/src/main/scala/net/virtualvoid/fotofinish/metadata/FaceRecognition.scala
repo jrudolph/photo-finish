@@ -63,18 +63,15 @@ object FaceData extends MetadataKind.Impl[FaceData]("net.virtualvoid.fotofinish.
   }
 }
 
-object FaceDataExtractor extends MetadataExtractor {
+object FaceDataExtractor {
   val NumJitters = 1
-  type EntryT = FaceData
 
-  def kind: String = "net.virtualvoid.fotofinish.metadata.FaceDataExtractor"
-  def version: Int = 1
-  def metadataKind: MetadataKind.Aux[FaceData] = FaceData
-  def dependsOn: Vector[MetadataKind] = Vector.empty
-
-  override protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FaceData] = ctx.accessData(hash) { file =>
-    Future {
-      FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
-    }(ctx.executionContext)
-  }
+  val instance =
+    MetadataExtractor("net.virtualvoid.fotofinish.metadata.FaceDataExtractor", 1, FaceData) { (hash, ctx) =>
+      ctx.accessData(hash) { file =>
+        Future {
+          FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
+        }(ctx.executionContext)
+      }
+    }
 }
