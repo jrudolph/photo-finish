@@ -488,14 +488,18 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     def handle(entry: MetadataEntry): HashState
   }
   case class CollectingDependencies(dependencyState: Vector[DependencyState]) extends HashState {
-    def handle(entry: MetadataEntry): HashState = {
-      val newL =
-        dependencyState.map {
-          case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
-          case x => x // FIXME: handle dependency changes
-        }
-      CollectingDependencies(newL)
-    }
+    def handle(entry: MetadataEntry): HashState =
+      if (entry.kind.kind == extractor.metadataKind.kind)
+        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
+        else Calculated(entry.kind.version)
+      else {
+        val newL =
+          dependencyState.map {
+            case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
+            case x => x // FIXME: handle dependency changes
+          }
+        CollectingDependencies(newL)
+      }
 
     def hasAllDeps: Boolean = dependencyState.forall(_.exists)
   }
