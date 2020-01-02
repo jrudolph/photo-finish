@@ -194,14 +194,16 @@ trait ExtractionContext {
   def accessData[T](hash: Hash)(f: File => Future[T]): Future[T]
   def accessDataSync[T](hash: Hash)(f: File => T): Future[T] = accessData(hash)(file => Future.fromTry(Try(f(file))))
 }
+
 trait MetadataExtractor {
   type EntryT
   def kind: String
   def version: Int
   def metadataKind: MetadataKind.Aux[EntryT]
+  def dependsOn: Vector[MetadataKind]
 
-  final def extract(hash: Hash, ctx: ExtractionContext): Future[MetadataEntry.Aux[EntryT]] =
-    extractEntry(hash, ctx)
+  final def extract(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[MetadataEntry.Aux[EntryT]] =
+    extractEntry(hash, dependencies, ctx)
       .map(value =>
         MetadataEntry(
           Hashed(hash),
@@ -210,7 +212,7 @@ trait MetadataExtractor {
           CreationInfo(DateTime.now, inferred = true, Extractor(kind, version)),
           value))(ctx.executionContext)
 
-  protected def extractEntry(hash: Hash, ctx: ExtractionContext): Future[EntryT]
+  protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT]
 }
 
 object MetadataJsonProtocol {

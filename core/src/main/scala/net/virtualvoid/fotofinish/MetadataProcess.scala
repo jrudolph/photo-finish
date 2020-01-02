@@ -471,10 +471,51 @@ object IngestionController extends MetadataProcess {
 }
 
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
-  sealed trait HashState
-  case object Known extends HashState
-  case object Scheduled extends HashState
-  case class Calculated(version: Int) extends HashState
+  sealed trait DependencyState {
+    def exists: Boolean
+    def get: MetadataEntry
+  }
+  case class Missing(kind: String, version: Int) extends DependencyState {
+    def exists: Boolean = false
+    def get: MetadataEntry = throw new IllegalStateException(s"Metadata for kind $kind was still missing")
+  }
+  case class Existing(value: MetadataEntry) extends DependencyState {
+    def exists: Boolean = true
+    def get: MetadataEntry = value
+  }
+
+  sealed trait HashState {
+    def handle(entry: MetadataEntry): HashState
+  }
+  case class CollectingDependencies(dependencyState: Vector[DependencyState]) extends HashState {
+    def handle(entry: MetadataEntry): HashState = {
+      val newL =
+        dependencyState.map {
+          case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
+          case x => x // FIXME: handle dependency changes
+        }
+      CollectingDependencies(newL)
+    }
+
+    def hasAllDeps: Boolean = dependencyState.forall(_.exists)
+  }
+  private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)))
+  case class Scheduled(dependencyState: Vector[DependencyState]) extends HashState {
+    override def handle(entry: MetadataEntry): HashState =
+      if (entry.kind.kind == extractor.metadataKind.kind)
+        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
+        else Calculated(entry.kind.version)
+      else this
+  }
+  case class Calculated(version: Int) extends HashState {
+    override def handle(entry: MetadataEntry): HashState =
+      if (entry.kind.kind == extractor.metadataKind.kind)
+        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
+        else Calculated(version max entry.kind.version)
+      else this
+    // FIXME: handle dependency changes
+  }
+  private val LatestVersion = Calculated(extractor.metadataKind.version)
 
   case class State(objectStates: Map[Hash, HashState]) {
     def get(hash: Hash): Option[HashState] = objectStates.get(hash)
@@ -482,6 +523,15 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
 
     def mutateStates(f: Map[Hash, HashState] => Map[Hash, HashState]): State =
       copy(objectStates = f(objectStates))
+
+    def handle(entry: MetadataEntry): State = {
+      val newVal =
+        objectStates.get(entry.target.hash) match {
+          case Some(s) => s.handle(entry)
+          case None    => Initial.handle(entry)
+        }
+      set(entry.target.hash, newVal)
+    }
   }
 
   type S = State
@@ -492,63 +542,68 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
 
   def initialState: S = State(Map.empty)
 
-  def processEvent(state: S, event: MetadataEnvelope): S = {
-    val hash = event.entry.target.hash
-    if (event.entry.kind == extractor.metadataKind) {
-      val newState =
-        state.get(hash) match {
-          // FIXME: Is `event.entry.kind.version` the version we want to check?
-          // Or do we want to recreate when the extractor version has changed? Probably should ask the extractor about it
-          case Some(Calculated(otherVersion)) => Calculated(otherVersion max event.entry.kind.version)
-          case _                              => Calculated(event.entry.kind.version)
-        }
-
-      state.set(hash, newState)
-    } else if (state.objectStates.contains(hash)) state
-    else state.set(hash, Known)
-  }
+  def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)
 
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
-    val toSchedule = state.objectStates.filter(_._2 == Known)
-    if (toSchedule.isEmpty) (state, Vector.empty)
-    else {
-      (
-        state.mutateStates(_ ++ toSchedule.mapValues(_ => Scheduled)),
-        toSchedule.keys.toVector.map { hash => () =>
-          extractor.extract(hash, context).map(Vector(_))(context.executionContext)
-        }
-      )
-    }
+    val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) = state.objectStates.collect {
+      case (hash, c @ CollectingDependencies(depStates)) if c.hasAllDeps =>
+        (
+          (_: State).set(hash, Scheduled(depStates)),
+          (() => extractor.extract(hash, depStates.map(_.get), context).map(Vector(_))(context.executionContext)): SideEffect
+        )
+    }.toVector.unzip
+    if (stateChanges.isEmpty) (state, Vector.empty)
+    else (stateChanges.foldLeft(state)((s, f) => f(s)), sideeffects)
   }
 
   def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): Unit = ()
 
-  import spray.json.DefaultJsonProtocol._
-  import spray.json._
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
+    import spray.json.DefaultJsonProtocol._
+    import spray.json._
+    import JsonExtra._
 
-  private implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
-  private implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
-    import net.virtualvoid.fotofinish.util.JsonExtra._
-    override def read(json: JsValue): HashState =
-      json.field("type") match {
-        case JsString("Known")      => Known
-        case JsString("Scheduled")  => Scheduled
-        case JsString("Calculated") => json.convertTo[Calculated]
-        case x                      => throw DeserializationException(s"Unexpected type '$x' for HashState")
+    implicit def missingFormat: JsonFormat[Missing] = jsonFormat2(Missing)
+    implicit def existingFormat: JsonFormat[Existing] = jsonFormat1(Existing)
+    implicit def depStateFormat: JsonFormat[DependencyState] = new JsonFormat[DependencyState] {
+      def read(json: JsValue): DependencyState =
+        json.field("type") match {
+          case JsString("Missing")  => json.convertTo[Missing]
+          case JsString("Existing") => json.convertTo[Existing]
+          case x                    => throw DeserializationException(s"Unexpected type '$x' for DependencyState")
+        }
+      def write(obj: DependencyState): JsValue = obj match {
+        case m: Missing  => m.toJson + ("type" -> JsString("Missing"))
+        case e: Existing => e.toJson + ("type" -> JsString("Existing"))
       }
-
-    override def write(obj: HashState): JsValue = obj match {
-      case Known         => JsObject("type" -> JsString("Known"))
-      case Scheduled     => JsObject("type" -> JsString("Scheduled"))
-      case c: Calculated => c.toJson + ("type" -> JsString("Calculated"))
     }
+
+    implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat1(CollectingDependencies.apply)
+    implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
+    implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
+    implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
+      import net.virtualvoid.fotofinish.util.JsonExtra._
+      override def read(json: JsValue): HashState =
+        json.field("type") match {
+          case JsString("CollectingDependencies") => json.convertTo[CollectingDependencies]
+          case JsString("Scheduled")              => json.convertTo[Scheduled]
+          case JsString("Calculated")             => json.convertTo[Calculated]
+          case x                                  => throw DeserializationException(s"Unexpected type '$x' for HashState")
+        }
+
+      override def write(obj: HashState): JsValue = obj match {
+        case c: CollectingDependencies => c.toJson + ("type" -> JsString("CollectingDependencies"))
+        case s: Scheduled              => s.toJson + ("type" -> JsString("Scheduled"))
+        case c: Calculated             => c.toJson + ("type" -> JsString("Calculated"))
+      }
+    }
+    jsonFormat1(State.apply)
   }
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 
   override def initializeStateSnapshot(state: State): State =
     state.mutateStates(_.mapValues {
-      case Scheduled => Known // throw away markers that a calculation is already in process
-      case x         => x
+      case Scheduled(depStates) => CollectingDependencies(depStates) // throw away markers that a calculation is already in process
+      case x                    => x
     })
 }
 

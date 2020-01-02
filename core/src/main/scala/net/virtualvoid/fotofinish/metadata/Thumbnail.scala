@@ -25,8 +25,9 @@ object ThumbnailExtractor extends MetadataExtractor {
   def kind: String = "thumbnail"
   def version: Int = 2
   def metadataKind: MetadataKind.Aux[Thumbnail] = Thumbnail
+  def dependsOn: Vector[MetadataKind] = Vector.empty
 
-  protected def extractEntry(hash: Hash, ctx: ExtractionContext): Future[Thumbnail] =
+  protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[Thumbnail] =
     ctx.accessData(hash) { file =>
       Future {
         import sys.process._

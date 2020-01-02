@@ -67,11 +67,12 @@ object FaceDataExtractor extends MetadataExtractor {
   val NumJitters = 1
   type EntryT = FaceData
 
-  override def kind: String = "net.virtualvoid.fotofinish.metadata.FaceDataExtractor"
-  override def version: Int = 1
-  override def metadataKind: MetadataKind.Aux[FaceData] = FaceData
+  def kind: String = "net.virtualvoid.fotofinish.metadata.FaceDataExtractor"
+  def version: Int = 1
+  def metadataKind: MetadataKind.Aux[FaceData] = FaceData
+  def dependsOn: Vector[MetadataKind] = Vector.empty
 
-  override protected def extractEntry(hash: Hash, ctx: ExtractionContext): Future[FaceData] = ctx.accessData(hash) { file =>
+  override protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FaceData] = ctx.accessData(hash) { file =>
     Future {
       FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
     }(ctx.executionContext)

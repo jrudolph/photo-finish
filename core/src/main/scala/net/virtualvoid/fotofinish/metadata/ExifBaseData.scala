@@ -50,7 +50,8 @@ object ExifBaseDataExtractor extends MetadataExtractor {
   def kind: String = "net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor"
   def version: Int = 1
   def metadataKind: MetadataKind.Aux[ExifBaseData] = ExifBaseData
-  def extractEntry(hash: Hash, ctx: ExtractionContext): Future[ExifBaseData] = ctx.accessDataSync(hash) { data =>
+  def dependsOn: Vector[MetadataKind] = Vector.empty
+  def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[ExifBaseData] = ctx.accessDataSync(hash) { data =>
     val metadata = ImageMetadataReader.readMetadata(data)
     val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
     val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
