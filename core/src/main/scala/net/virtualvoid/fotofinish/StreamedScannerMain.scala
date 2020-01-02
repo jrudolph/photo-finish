@@ -3,6 +3,7 @@ package net.virtualvoid.fotofinish
 import java.io.File
 
 import akka.actor.ActorSystem
+import akka.stream.scaladsl.Source
 
 import scala.concurrent.duration._
 
@@ -16,7 +17,8 @@ object StreamedScannerMain extends App {
   val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
   println(s"Ingesting new files from $dir")
   val is = new Scanner(Settings.config, Settings.manager).scan(dir)
-  is.foreach((app.ingest _).tupled)
+  Source.fromIterator(() => is)
+    .runWith(app.ingestionDataSink)
 
   system.scheduler.scheduleOnce(5.seconds) {
     println("Shutting down...")

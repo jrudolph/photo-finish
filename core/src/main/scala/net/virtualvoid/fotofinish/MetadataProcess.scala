@@ -31,6 +31,8 @@ trait HandleWithStateFunc[S] {
     apply { state =>
       (state, Vector.empty, f(state))
     }
+
+  def handleStream: Sink[S => (S, Vector[SideEffect]), Any]
 }
 
 trait MetadataProcess {
@@ -64,19 +66,31 @@ object MetadataProcess {
 
   def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal, extractionEC: ExecutionContext)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
-      Source.queue[StreamEntry](5000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
-        .mapMaterializedValue { queue =>
-          p.api(new HandleWithStateFunc[p.S] {
-            def apply[T](f: p.S => (p.S, Vector[SideEffect], T)): Future[T] = {
-              val promise = Promise[T]
-              queue.offer(Execute(f, promise))
-                .onComplete {
-                  case Success(QueueOfferResult.Enqueued) =>
-                  case x                                  => println(s"Injecting entries failed because of $x")
-                }
-              promise.future
-            }
-          })
+      Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
+        .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
+        .mapMaterializedValue {
+          case (queue, sink) =>
+            p.api(new HandleWithStateFunc[p.S] {
+              def apply[T](f: p.S => (p.S, Vector[SideEffect], T)): Future[T] = {
+                val promise = Promise[T]
+                queue.offer(Execute(f, promise))
+                  .onComplete {
+                    case Success(QueueOfferResult.Enqueued) =>
+                    case x                                  => println(s"Injecting entries failed because of $x")
+                  }
+                promise.future
+              }
+
+              def handleStream: Sink[p.S => (p.S, Vector[SideEffect]), Any] =
+                Flow[p.S => (p.S, Vector[SideEffect])]
+                  .map { f =>
+                    Execute[p.S, Unit]({ state =>
+                      val (newState, ses) = f(state)
+                      (newState, ses, ())
+                    }, Promise.successful(()))
+                  }
+                  .to(sink)
+            })
         }
 
     val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
@@ -439,6 +453,7 @@ object GetAllObjectsProcess extends MetadataProcess {
 }
 
 trait Ingestion {
+  def ingestionDataSink: Sink[(Hash, IngestionData), Any]
   def ingest(hash: Hash, data: IngestionData): Unit
 }
 object IngestionController extends MetadataProcess {
@@ -459,31 +474,40 @@ object IngestionController extends MetadataProcess {
   override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
-    def ingest(hash: Hash, newData: IngestionData): Unit = {
+    def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
+      Flow[(Hash, IngestionData)]
+        .map {
+          case (hash, data) => handleNewEntry(hash, data)
+        }
+        .to(handleWithState.handleStream)
+
+    def ingest(hash: Hash, newData: IngestionData): Unit =
+      handleWithState { state =>
+        val (newState, ses) = handleNewEntry(hash, newData)(state)
+        (newState, ses, ())
+      }
+
+    private def handleNewEntry(hash: Hash, newData: IngestionData): S => (S, Vector[SideEffect]) = state => {
       def matches(data: IngestionData): Boolean =
         newData.originalFullFilePath == data.originalFullFilePath
 
-      handleWithState { state =>
-        //println(s"Checking if $fi needs ingesting...")
+      val newEntries =
+        if (!state.datas.get(hash).exists(_.exists(matches))) {
+          println(s"Injecting [$newData]")
+          //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
+          Vector(MetadataEntry(
+            Id.Hashed(hash),
+            Vector.empty,
+            IngestionData,
+            CreationInfo(DateTime.now, false, Ingestion),
+            newData
+          ))
+        } else {
+          //println(s"Did not ingest $fi because there already was an entry")
+          Vector.empty
+        }
 
-        val newEntries =
-          if (!state.datas.get(hash).exists(_.exists(matches))) {
-            println(s"Injecting [$newData]")
-            //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
-            Vector(MetadataEntry(
-              Id.Hashed(hash),
-              Vector.empty,
-              IngestionData,
-              CreationInfo(DateTime.now, false, Ingestion),
-              newData
-            ))
-          } else {
-            //println(s"Did not ingest $fi because there already was an entry")
-            Vector.empty
-          }
-
-        (state, Vector(() => Future.successful(newEntries)), ())
-      }
+      (state, Vector(() => Future.successful(newEntries)))
     }
   }
   import spray.json._

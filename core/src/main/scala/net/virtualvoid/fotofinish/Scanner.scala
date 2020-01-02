@@ -17,7 +17,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
   import Scanner._
   import config._
 
-  def scan(target: File): immutable.Seq[(Hash, IngestionData)] = {
+  def scan(target: File): Iterator[(Hash, IngestionData)] = {
     val allFiles = allFilesMatching(target, supportedFiles)
 
     val numFiles = allFiles.size
@@ -25,7 +25,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
 
     println(s"Found $numFiles files with total size $totalSize")
 
-    allFiles.map(ensureInRepo).toVector
+    allFiles.iterator.map(f => ensureInRepo(f))
   }
 
   def ensureInRepo(file: File): (Hash, IngestionData) = {
