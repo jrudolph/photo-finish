@@ -438,13 +438,16 @@ object GetAllObjectsProcess extends MetadataProcess {
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
+trait Ingestion {
+  def ingest(hash: Hash, data: IngestionData): Unit
+}
 object IngestionController extends MetadataProcess {
   case class State(datas: Map[Hash, Vector[IngestionData]]) {
     def add(hash: Hash, data: IngestionData): State =
       copy(datas = datas + (hash -> (datas.getOrElse(hash, Vector.empty) :+ data)))
   }
   type S = State
-  type Api = FileInfo => Unit
+  type Api = Ingestion
 
   override def version: Int = 1
   override def initialState: State = State(Map.empty)
@@ -455,30 +458,32 @@ object IngestionController extends MetadataProcess {
   }
   override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
 
-  def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): FileInfo => Unit = { fi =>
-    def matches(data: IngestionData): Boolean =
-      fi.originalFile.exists(f => f.getName == data.originalFileName && f.getParent == data.originalFilePath)
+  def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
+    def ingest(hash: Hash, newData: IngestionData): Unit = {
+      def matches(data: IngestionData): Boolean =
+        newData.originalFullFilePath == data.originalFullFilePath
 
-    handleWithState { state =>
-      //println(s"Checking if $fi needs ingesting...")
+      handleWithState { state =>
+        //println(s"Checking if $fi needs ingesting...")
 
-      val newEntries =
-        if (!state.datas.get(fi.hash).exists(_.exists(matches))) {
-          println(s"Injecting [$fi]")
-          //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
-          Vector(MetadataEntry(
-            Id.Hashed(fi.hash),
-            Vector.empty,
-            IngestionData,
-            CreationInfo(DateTime.now, false, Ingestion),
-            IngestionData.fromFileInfo(fi)
-          ))
-        } else {
-          //println(s"Did not ingest $fi because there already was an entry")
-          Vector.empty
-        }
+        val newEntries =
+          if (!state.datas.get(hash).exists(_.exists(matches))) {
+            println(s"Injecting [$newData]")
+            //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
+            Vector(MetadataEntry(
+              Id.Hashed(hash),
+              Vector.empty,
+              IngestionData,
+              CreationInfo(DateTime.now, false, Ingestion),
+              newData
+            ))
+          } else {
+            //println(s"Did not ingest $fi because there already was an entry")
+            Vector.empty
+          }
 
-      (state, Vector(() => Future.successful(newEntries)), ())
+        (state, Vector(() => Future.successful(newEntries)), ())
+      }
     }
   }
   import spray.json._

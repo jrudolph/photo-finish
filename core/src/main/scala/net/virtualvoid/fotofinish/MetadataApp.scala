@@ -4,7 +4,7 @@ import akka.actor.ActorSystem
 import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.MetadataProcess.{ Journal, SideEffect }
-import net.virtualvoid.fotofinish.metadata.{ Id, Metadata }
+import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
 
 import scala.collection.immutable.TreeSet
 import scala.concurrent.{ ExecutionContext, Future }
@@ -16,7 +16,7 @@ trait MetadataApp {
   def config: RepositoryConfig
 
   def journal: Journal
-  def ingest(fileInfo: FileInfo): Unit
+  def ingest(hash: Hash, data: IngestionData): Unit
   def metadataFor(id: Id): Future[Metadata]
   def knownObjects(): Future[TreeSet[Id]]
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
@@ -63,7 +63,7 @@ object MetadataApp {
       val metadataAccess = runProcess(PerObjectMetadataCollector)
       config.autoExtractors.foreach(e => runProcess(new MetadataIsCurrentProcess(e)))
 
-      def ingest(fileInfo: FileInfo): Unit = ingestor(fileInfo)
+      def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)
       def metadataFor(id: Id): Future[Metadata] = metadataAccess.metadataFor(id)
       def knownObjects(): Future[TreeSet[Id]] = metadataAccess.knownObjects()
 

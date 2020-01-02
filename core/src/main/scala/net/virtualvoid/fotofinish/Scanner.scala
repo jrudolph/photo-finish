@@ -8,6 +8,8 @@ import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFileAttributes
 
+import net.virtualvoid.fotofinish.metadata.IngestionData
+
 import scala.collection.immutable
 import scala.Console._
 
@@ -15,7 +17,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
   import Scanner._
   import config._
 
-  def scan(target: File): immutable.Seq[FileInfo] = {
+  def scan(target: File): immutable.Seq[(Hash, IngestionData)] = {
     val allFiles = allFilesMatching(target, supportedFiles)
 
     val numFiles = allFiles.size
@@ -26,15 +28,19 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
     allFiles.map(ensureInRepo).toVector
   }
 
-  def ensureInRepo(file: File): FileInfo = {
+  def ensureInRepo(file: File): (Hash, IngestionData) = {
     val ufi = unixFileInfo(file.toPath)
     val byInode = manager.inodeMap.get((ufi.dev, ufi.inode))
     if (byInode.isDefined) {
       println(s"Found hard link into repo for [$file] at [${byInode.get}]")
-      byInode.get.copy(originalFile = Some(file))
+      val fi = byInode.get
+      fi.hash -> IngestionData.fromFileInfo(fi.copy(originalFile = Some(file)))
     } else {
       val hash = hashAlgorithm(file)
       val inRepo = repoFile(hash)
+      // make sure to get original data before moving / linking files around
+      val res = hash -> IngestionData.fromFileInfo(FileInfo(hash, inRepo, Some(file)))
+
       if (!inRepo.exists()) {
         println(s"${GREEN}Creating repo file$RESET for [$file] at [$inRepo] exists: ${inRepo.exists()}")
         Files.createDirectories(inRepo.getParentFile.toPath)
@@ -54,7 +60,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
           println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET")
       }
 
-      FileInfo(hash, inRepo, Some(file))
+      res
     }
   }
 }
