@@ -1,12 +1,14 @@
 package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
+import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.MetadataProcess.{ Journal, SideEffect }
 import net.virtualvoid.fotofinish.metadata.{ Id, Metadata }
 
 import scala.collection.immutable.TreeSet
 import scala.concurrent.{ ExecutionContext, Future }
+import scala.util.Success
 
 trait MetadataApp {
   implicit def system: ActorSystem
@@ -25,6 +27,7 @@ object MetadataApp {
     new MetadataApp {
       def system: ActorSystem = _system
       implicit def executionContext: ExecutionContext = system.dispatcher
+      val extractionContext = system.dispatchers.lookup("extraction-dispatcher")
 
       def config: RepositoryConfig = _config
 
@@ -33,13 +36,14 @@ object MetadataApp {
 
       val executor: Sink[SideEffect, Any] =
         MergeHub.source[SideEffect]
-          .mapAsyncUnordered(config.executorParallelism)(_())
-          .mapConcat(identity)
+          //.buffer(1000, OverflowStrategy.backpressure)
+          .mapAsyncUnordered(config.executorParallelism)(_().transform(Success(_)))
+          .mapConcat(_.toOption.toVector.flatten)
           .to(journal.newEntrySink)
           .run()
 
       def runProcess(process: MetadataProcess): process.Api =
-        MetadataProcess.asSource(process, Settings.manager, journal)
+        MetadataProcess.asSource(process, Settings.manager, journal, extractionContext)
           .recoverWithRetries(1, {
             case ex =>
               println(s"Process [${process.id}] failed with [$ex]")
@@ -57,9 +61,6 @@ object MetadataApp {
       def metadataFor(id: Id): Future[Metadata] = metadataAccess.metadataFor(id)
       def knownObjects(): Future[TreeSet[Id]] = metadataAccess.knownObjects()
 
-      /*def completeHash(hashPrefix: String): Future[Option[Id]] =
-        metadataAccess.knownObjects()
-          .map(_.find(_.hash.asHexString.startsWith()))*/
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()
           .map { ids =>

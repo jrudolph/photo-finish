@@ -61,9 +61,9 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
+  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal, extractionEC: ExecutionContext)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
-      Source.queue[StreamEntry](1000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
+      Source.queue[StreamEntry](5000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mapMaterializedValue { queue =>
           p.api(new HandleWithStateFunc[p.S] {
             def apply[T](f: p.S => (p.S, Vector[SideEffect], T)): Future[T] = {
@@ -80,8 +80,8 @@ object MetadataProcess {
 
     val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
     val extractionContext = new ExtractionContext {
-      override implicit def executionContext: ExecutionContext = ec
-      override def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
+      def executionContext: ExecutionContext = extractionEC
+      def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
         // FIXME: easy for now as we expect all hashes to be available as files
         f(manager.config.fileInfoOf(hash).repoFile)
     }

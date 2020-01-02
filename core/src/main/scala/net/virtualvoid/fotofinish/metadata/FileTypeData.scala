@@ -40,7 +40,7 @@ object ImageDataExtractor {
       ctx.accessData(hash) { file => f(hash, file, ctx) }
     }
   def sync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Hash, File, ExtractionContext) => metadata.T): MetadataExtractor =
-    apply(_kind, _version, metadata, mimeTypeFilter)((hash, imageFile, ctx) => Future.fromTry(Try(f(hash, imageFile, ctx))))
+    apply(_kind, _version, metadata, mimeTypeFilter)((hash, imageFile, ctx) => Future(f(hash, imageFile, ctx))(ctx.executionContext))
 
   def fromFileSync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: File => metadata.T): MetadataExtractor =
     sync(_kind, _version, metadata, mimeTypeFilter)((_, imageFile, _) => f(imageFile))
