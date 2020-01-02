@@ -14,7 +14,6 @@ import scala.collection.immutable
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.reflect.ClassTag
 import scala.util.Try
-import scala.util.control.NoStackTrace
 
 trait MetadataKind {
   type T
