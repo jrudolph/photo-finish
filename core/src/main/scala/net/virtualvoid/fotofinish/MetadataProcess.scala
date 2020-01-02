@@ -520,6 +520,14 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     // FIXME: handle dependency changes
   }
   private val LatestVersion = Calculated(extractor.metadataKind.version)
+  case class PreConditionNotMet(cause: String) extends HashState {
+    override def handle(entry: MetadataEntry): HashState = {
+      require(
+        !(entry.kind.kind == extractor.metadataKind.kind && entry.kind.version == extractor.metadataKind.version),
+        s"Unexpected metadata entry found where previously precondition was not met because of [$cause]")
+      this
+    }
+  }
 
   case class State(objectStates: Map[Hash, HashState]) {
     def get(hash: Hash): Option[HashState] = objectStates.get(hash)
@@ -551,10 +559,22 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
     val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) = state.objectStates.collect {
       case (hash, c @ CollectingDependencies(depStates)) if c.hasAllDeps =>
-        (
-          (_: State).set(hash, Scheduled(depStates)),
-          (() => extractor.extract(hash, depStates.map(_.get), context).map(Vector(_))(context.executionContext)): SideEffect
-        )
+        val depValues = depStates.map(_.get)
+
+        extractor.precondition(hash, depValues, context) match {
+          case None =>
+            // precondition met
+            (
+              (_: State).set(hash, Scheduled(depStates)),
+              (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): SideEffect
+            )
+          case Some(cause) =>
+            (
+              (_: State).set(hash, PreConditionNotMet(cause)),
+              (() => Future.successful(Vector.empty)) // FIXME: is there a better way that doesn't involve scheduling a useless process?
+            )
+        }
+
     }.toVector.unzip
     if (stateChanges.isEmpty) (state, Vector.empty)
     else (stateChanges.foldLeft(state)((s, f) => f(s)), sideeffects)
@@ -585,6 +605,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat1(CollectingDependencies.apply)
     implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
     implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
+    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat1(PreConditionNotMet.apply)
     implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
       import net.virtualvoid.fotofinish.util.JsonExtra._
       override def read(json: JsValue): HashState =
@@ -592,6 +613,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
           case JsString("CollectingDependencies") => json.convertTo[CollectingDependencies]
           case JsString("Scheduled")              => json.convertTo[Scheduled]
           case JsString("Calculated")             => json.convertTo[Calculated]
+          case JsString("PreConditionNotMet")     => json.convertTo[PreConditionNotMet]
           case x                                  => throw DeserializationException(s"Unexpected type '$x' for HashState")
         }
 
@@ -599,6 +621,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
         case c: CollectingDependencies => c.toJson + ("type" -> JsString("CollectingDependencies"))
         case s: Scheduled              => s.toJson + ("type" -> JsString("Scheduled"))
         case c: Calculated             => c.toJson + ("type" -> JsString("Calculated"))
+        case p: PreConditionNotMet     => p.toJson + ("type" -> JsString("PreConditionNotMet"))
       }
     }
     jsonFormat1(State.apply)

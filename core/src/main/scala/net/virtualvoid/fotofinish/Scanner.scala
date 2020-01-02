@@ -60,7 +60,7 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
 }
 
 object Scanner {
-  val supportedFiles = withExtensions("jpg", "jpeg")
+  val supportedFiles = withExtensions("jpg", "jpeg", "txt")
 
   def allFilesMatching(dir: File, fileFilter: FileFilter): Iterable[File] = {
     def iterate(dir: File): Iterator[File] = {

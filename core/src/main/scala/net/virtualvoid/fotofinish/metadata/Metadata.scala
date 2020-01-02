@@ -14,6 +14,7 @@ import scala.collection.immutable
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.reflect.ClassTag
 import scala.util.Try
+import scala.util.control.NoStackTrace
 
 trait MetadataKind {
   type T
@@ -203,7 +204,11 @@ trait MetadataExtractor {
   def dependsOn: Vector[MetadataKind]
 
   final def extract(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[MetadataEntry.Aux[EntryT]] =
-    extractEntry(hash, dependencies, ctx)
+    Try(extractEntry(hash, dependencies, ctx))
+      .recover[Future[EntryT]] {
+        case ex => Future.failed(ex)
+      }
+      .get // FIXME: recover + get really the best way to do this?
       .map(value =>
         MetadataEntry(
           Hashed(hash),
@@ -212,9 +217,20 @@ trait MetadataExtractor {
           CreationInfo(DateTime.now, inferred = true, Extractor(kind, version)),
           value))(ctx.executionContext)
 
+  /**
+   * Allows to specify a precondition to run against the dependency values that is run before extract is called.
+   *
+   * Return None if precondition is met or Some(cause) if there's an obstacle.
+   *
+   * FIXME: is there a better type or name for that method?
+   */
+  def precondition(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Option[String] = None
   protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT]
 }
+
 object MetadataExtractor {
+  // FIXME: replace with more flexible builder pattern
+
   def apply(_kind: String, _version: Int, metadata: MetadataKind)(f: (Hash, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
     new MetadataExtractor {
       type EntryT = metadata.T
@@ -235,6 +251,20 @@ object MetadataExtractor {
       def dependsOn: Vector[MetadataKind] = Vector(dep1)
       protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT] =
         f(hash, dependencies(0).value.asInstanceOf[dep1.T], ctx)
+    }
+
+  def cond1(_kind: String, _version: Int, metadata: MetadataKind, cond1: MetadataKind)(p: cond1.T => Option[String])(f: (Hash, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
+    new MetadataExtractor {
+      type EntryT = metadata.T
+      def kind: String = _kind
+      def version: Int = _version
+      def metadataKind: MetadataKind.Aux[EntryT] = metadata
+      def dependsOn: Vector[MetadataKind] = Vector(cond1)
+      protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT] =
+        f(hash, ctx)
+
+      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Option[String] =
+        p(dependencies(0).value.asInstanceOf[cond1.T])
     }
 }
 

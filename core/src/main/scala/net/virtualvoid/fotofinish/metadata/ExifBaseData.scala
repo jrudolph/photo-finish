@@ -45,35 +45,33 @@ object ExifBaseData extends MetadataKind.Impl[ExifBaseData](
 
 object ExifBaseDataExtractor {
   val instance =
-    MetadataExtractor("net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor", 1, ExifBaseData) { (hash, ctx) =>
-      ctx.accessDataSync(hash) { data =>
-        val metadata = ImageMetadataReader.readMetadata(data)
-        val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
-        val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
-        val dirs = dir0.toSeq ++ dir1.toSeq
+    ImageDataExtractor.fromFileSync("net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor", 1, ExifBaseData) { imageFile =>
+      val metadata = ImageMetadataReader.readMetadata(imageFile)
+      val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
+      val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
+      val dirs = dir0.toSeq ++ dir1.toSeq
 
-        def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
-          tag =>
-            dirs.collectFirst {
-              case dir if dir.containsTag(tag) => Option(tped(dir, tag))
-            }.flatten
+      def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
+        tag =>
+          dirs.collectFirst {
+            case dir if dir.containsTag(tag) => Option(tped(dir, tag))
+          }.flatten
 
-        def dateEntry = entry((dir, tag) => Try(DateTime(dir.getDate(tag).getTime)).toOption.orNull) // may fail if outside reasonable date range
-        def intEntry = entry(_.getInt(_))
-        def stringEntry = entry(_.getString(_))
+      def dateEntry = entry((dir, tag) => Try(DateTime(dir.getDate(tag).getTime)).toOption.orNull) // may fail if outside reasonable date range
+      def intEntry = entry(_.getInt(_))
+      def stringEntry = entry(_.getString(_))
 
-        val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH)
-        val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT)
-        val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
-        val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
-        val orientation = intEntry(ExifDirectoryBase.TAG_ORIENTATION).map {
-          case 0 | 1 => Orientation.Normal
-          case 3     => Orientation.Clockwise180
-          case 6     => Orientation.Clockwise270
-          case 8     => Orientation.Clockwise90
-        }
-
-        ExifBaseData(width, height, date, model, orientation)
+      val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH)
+      val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT)
+      val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
+      val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
+      val orientation = intEntry(ExifDirectoryBase.TAG_ORIENTATION).map {
+        case 0 | 1 => Orientation.Normal
+        case 3     => Orientation.Clockwise180
+        case 6     => Orientation.Clockwise270
+        case 8     => Orientation.Clockwise90
       }
+
+      ExifBaseData(width, height, date, model, orientation)
     }
 }

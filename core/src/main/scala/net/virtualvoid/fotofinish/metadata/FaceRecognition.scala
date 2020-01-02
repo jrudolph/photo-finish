@@ -5,7 +5,6 @@ import net.virtualvoid.facerecognition.{ Face, FaceRecognitionLib }
 import spray.json.JsonFormat
 
 import scala.collection.immutable
-import scala.concurrent.Future
 
 object FaceRecognition {
   val MaxFaces = 100
@@ -67,11 +66,7 @@ object FaceDataExtractor {
   val NumJitters = 1
 
   val instance =
-    MetadataExtractor("net.virtualvoid.fotofinish.metadata.FaceDataExtractor", 1, FaceData) { (hash, ctx) =>
-      ctx.accessData(hash) { file =>
-        Future {
-          FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
-        }(ctx.executionContext)
-      }
+    ImageDataExtractor.fromFileSync("net.virtualvoid.fotofinish.metadata.FaceDataExtractor", 1, FaceData) { file =>
+      FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
     }
 }
