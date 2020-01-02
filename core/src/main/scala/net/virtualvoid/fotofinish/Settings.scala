@@ -2,6 +2,8 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
+import scala.concurrent.duration._
+
 import net.virtualvoid.fotofinish.metadata._
 
 object Settings {
@@ -35,7 +37,8 @@ object Settings {
       HashAlgorithm.Sha512,
       knownMetadataKinds,
       autoExtractors,
-      8)
+      8,
+      10.seconds)
 
   val manager = new RepositoryManager(config)
 }

@@ -4,6 +4,8 @@ import java.io.File
 
 import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataExtractor, MetadataKind }
 
+import scala.concurrent.duration.FiniteDuration
+
 final case class RepositoryConfig(
     storageDir:          File,
     metadataDir:         File,
@@ -11,7 +13,8 @@ final case class RepositoryConfig(
     hashAlgorithm:       HashAlgorithm,
     knownMetadataKinds:  Set[MetadataKind],
     autoExtractors:      Set[MetadataExtractor],
-    executorParallelism: Int
+    executorParallelism: Int,
+    snapshotInterval:    FiniteDuration
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")

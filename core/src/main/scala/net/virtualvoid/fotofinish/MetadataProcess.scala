@@ -58,6 +58,7 @@ object MetadataProcess {
   sealed trait StreamEntry
   final case class Metadata(entry: MetadataEnvelope) extends StreamEntry
   case object AllObjectsReplayed extends StreamEntry
+  case object MakeSnapshot extends StreamEntry
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
@@ -88,6 +89,7 @@ object MetadataProcess {
 
     val processFlow =
       Flow[StreamEntry]
+        .merge(Source.tick(manager.config.snapshotInterval, manager.config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
         .statefulMapConcat[SideEffect] { () =>
           case class Effect(sideEffects: immutable.Iterable[SideEffect], nextHandler: Handler, newSeqNr: Long, newState: p.S, runStreamEntry: StreamEntry = null) {
@@ -144,6 +146,7 @@ object MetadataProcess {
 
             case e: Execute[p.S, t] @unchecked => replaying(waitingExecutions :+ e)
 
+            case MakeSnapshot                  => doSnapshot()
             case ShuttingDown                  => shutdown()
           }
           def ignoreDuplicateSeqNrs: Handler = {
@@ -158,6 +161,7 @@ object MetadataProcess {
                 .changeState(newState)
                 .schedule(sideEffects)
 
+            case MakeSnapshot => doSnapshot()
             case ShuttingDown => shutdown()
           }
           def liveEvents: Handler = {
@@ -182,14 +186,21 @@ object MetadataProcess {
                 .changeState(newState)
                 .schedule(sideEffects)
 
+            case MakeSnapshot       => doSnapshot()
             case ShuttingDown       => shutdown()
 
             case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
           }
+          def doSnapshot(): Effect = {
+            saveSnapshot()
+            Effect.empty
+          }
           def shutdown(): Effect = {
-            serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
+            saveSnapshot()
             closing
           }
+          def saveSnapshot(): Unit = serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
+
           // FIXME: try to use Effect here as well (complicated because then we need to be able to stack effects
           def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
             Try(e.f(currentState)) match {
