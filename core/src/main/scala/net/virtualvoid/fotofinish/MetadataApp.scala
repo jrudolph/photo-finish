@@ -36,9 +36,15 @@ object MetadataApp {
 
       val executor: Sink[SideEffect, Any] =
         MergeHub.source[SideEffect]
-          //.buffer(1000, OverflowStrategy.backpressure)
+          .buffer(10000, OverflowStrategy.fail)
           .mapAsyncUnordered(config.executorParallelism)(_().transform(Success(_)))
           .mapConcat(_.toOption.toVector.flatten)
+          .watchTermination() { (mat, fut) =>
+            fut.onComplete { res =>
+              println(s"Executor stopped with [$res]")
+            }
+            mat
+          }
           .to(journal.newEntrySink)
           .run()
 
