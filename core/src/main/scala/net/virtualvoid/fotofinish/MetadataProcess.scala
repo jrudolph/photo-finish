@@ -241,9 +241,15 @@ object MetadataProcess {
         })
 
     journal.source(snapshot.currentSeqNr + 1)
-      .map { e =>
-        println(s"[${p.id}] at [$e]")
-        e
+      .map {
+        case m @ Metadata(entry) =>
+          if ((entry.seqNr % 100) == 0) println(s"[${p.id}] at [${entry.seqNr}]")
+
+          m
+        case e =>
+          println(s"[${p.id}] at [$e]")
+          e
+
       }
       .viaMat(processFlow)(Keep.right)
   }
@@ -454,7 +460,7 @@ object IngestionController extends MetadataProcess {
       fi.originalFile.exists(f => f.getName == data.originalFileName && f.getParent == data.originalFilePath)
 
     handleWithState { state =>
-      println(s"Checking if $fi needs ingesting...")
+      //println(s"Checking if $fi needs ingesting...")
 
       val newEntries =
         if (!state.datas.get(fi.hash).exists(_.exists(matches))) {
@@ -468,7 +474,7 @@ object IngestionController extends MetadataProcess {
             IngestionData.fromFileInfo(fi)
           ))
         } else {
-          println(s"Did not ingest $fi because there already was an entry")
+          //println(s"Did not ingest $fi because there already was an entry")
           Vector.empty
         }
 
