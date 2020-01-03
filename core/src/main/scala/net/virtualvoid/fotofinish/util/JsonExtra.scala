@@ -14,6 +14,7 @@ object JsonExtra {
 
   trait DeriveFormat[T] {
     def apply[U](toT: U => T, fromT: T => U)(implicit tFormat: JsonFormat[T]): JsonFormat[U]
+    def to[U](toT: U => T, fromT: T => U)(implicit tFormat: JsonFormat[T]): JsonFormat[U] = apply(toT, fromT)(tFormat)
   }
   def deriveFormatFrom[T]: DeriveFormat[T] =
     new DeriveFormat[T] {

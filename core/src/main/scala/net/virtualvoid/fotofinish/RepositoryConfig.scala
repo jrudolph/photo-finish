@@ -2,7 +2,10 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataExtractor, MetadataKind }
+import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, SimpleJournalEntry, SimpleKind }
+import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataEnvelope, MetadataExtractor, MetadataKind }
+import net.virtualvoid.fotofinish.util.JsonExtra
+import spray.json.JsonFormat
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -58,5 +61,24 @@ final case class RepositoryConfig(
       metadataCollectionFor(entry.kind)
     )
 
-  implicit val entryFormat = MetadataEntry.entryFormat(knownMetadataKinds)
+  def resolve(kind: SimpleKind): MetadataKind =
+    knownMetadataKinds.find(k => k.kind == kind.kind && k.version == kind.version)
+      .getOrElse(throw new IllegalArgumentException(s"No MetadataKind found for [$kind] (has [${knownMetadataKinds.mkString(", ")}])"))
+  def resolve(entry: SimpleEntry): MetadataEntry = {
+    val kind = resolve(entry.kind)
+
+    MetadataEntry[kind.T](
+      entry.target,
+      entry.secondaryTargets,
+      kind,
+      entry.creation,
+      entry.value.convertTo[kind.T](kind.jsonFormat)
+    )
+  }
+  def resolve(simpleJournalEntry: SimpleJournalEntry): MetadataEnvelope =
+    MetadataEnvelope(simpleJournalEntry.seqNr, resolve(simpleJournalEntry.entry))
+
+  import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.simpleEntryFormat
+  implicit def entryFormat: JsonFormat[MetadataEntry] =
+    JsonExtra.deriveFormatFrom[SimpleEntry](SimpleEntry(_), resolve(_))
 }

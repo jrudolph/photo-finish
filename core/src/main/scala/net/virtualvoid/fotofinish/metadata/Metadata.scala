@@ -7,7 +7,7 @@ import java.util.Base64
 import akka.http.scaladsl.model.DateTime
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
-import net.virtualvoid.fotofinish.util.JsonExtra._
+import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json._
 
 import scala.collection.immutable
@@ -94,6 +94,7 @@ object Id {
       case JsString(x) =>
         x.split(":") match {
           case Array("sha-512", data) => Hashed(Hash.fromString(HashAlgorithm.Sha512, data))
+          case x                      => MetadataJsonProtocol.error(s"Cannot read Id from split string [${x.mkString(", ")}]")
         }
       case x => MetadataJsonProtocol.error(s"Cannot read Id from $x")
     }
@@ -134,38 +135,6 @@ object MetadataEntry {
   ) extends MetadataEntry {
     type T = _T
   }
-
-  def entryFormat(knownKinds: Set[MetadataKind]): JsonFormat[MetadataEntry] = {
-    case class SimpleEntry(kind: KindHeader)
-    case class KindHeader(kind: String, version: Int)
-
-    import DefaultJsonProtocol._
-    implicit val headerFormat = jsonFormat2(KindHeader.apply _)
-
-    implicit def kindFormatGen: JsonFormat[MetadataKind] = new JsonFormat[MetadataKind] {
-      override def read(json: JsValue): MetadataKind = {
-        val kindHeader = json.convertTo[KindHeader]
-        knownKinds.find(k => k.kind == kindHeader.kind && k.version == kindHeader.version)
-          .getOrElse(throw new IllegalArgumentException(s"No MetadataKind found for [$kindHeader] (has [${knownKinds.mkString(", ")}])"))
-      }
-      override def write(obj: MetadataKind): JsValue =
-        KindHeader(obj.kind, obj.version).toJson
-    }
-    implicit def kindFormat[T]: JsonFormat[MetadataKind.Aux[T]] = kindFormatGen.asInstanceOf[JsonFormat[MetadataKind.Aux[T]]]
-    def implFormat(kind: MetadataKind): JsonFormat[Impl[kind.T]] = {
-      import kind.jsonFormat
-      jsonFormat5(Impl.apply)
-    }
-
-    new JsonFormat[MetadataEntry] {
-      override def write(obj: MetadataEntry): JsValue =
-        obj.asInstanceOf[Impl[obj.T]].toJson(implFormat(obj.kind))
-      override def read(json: JsValue): MetadataEntry = {
-        val kind = json.asJsObject.field("kind").convertTo[MetadataKind]
-        json.convertTo(implFormat(kind))
-      }
-    }
-  }
 }
 
 trait MetadataEnvelope {
@@ -179,14 +148,8 @@ object MetadataEnvelope {
   private case class Impl(seqNr: Long, entry: MetadataEntry) extends MetadataEnvelope
 
   import DefaultJsonProtocol._
-  implicit def envelopeFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[MetadataEnvelope] = {
-    implicit val implFormat: JsonFormat[Impl] = jsonFormat2(Impl.apply _)
-
-    new JsonFormat[MetadataEnvelope] {
-      override def read(json: JsValue): MetadataEnvelope = json.convertTo[Impl]
-      override def write(obj: MetadataEnvelope): JsValue = obj.asInstanceOf[Impl].toJson
-    }
-  }
+  implicit def envelopeFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[MetadataEnvelope] =
+    JsonExtra.deriveFormatFrom[Impl].to[MetadataEnvelope](_.asInstanceOf[Impl], identity)(jsonFormat2(Impl.apply _))
 }
 
 trait ExtractionContext {
@@ -270,23 +233,45 @@ object MetadataExtractor {
 object MetadataJsonProtocol {
   def error(message: String): Nothing = throw DeserializationException(message)
 
-  implicit val dateTimeFormat: JsonFormat[DateTime] = new JsonFormat[DateTime] {
-    override def read(json: JsValue): DateTime = json match {
-      case JsString(data) => DateTime.fromIsoDateTimeString(data).getOrElse(error(s"Date could not be read [$data]"))
-      case x              => MetadataJsonProtocol.error(s"Cannot read DateTime from $x")
-    }
-    override def write(obj: DateTime): JsValue = JsString(obj.toIsoDateTimeString())
+  import DefaultJsonProtocol._
+  implicit val dateTimeFormat: JsonFormat[DateTime] =
+    JsonExtra.deriveFormatFrom[String](
+      _.toIsoDateTimeString(),
+      data => DateTime.fromIsoDateTimeString(data).getOrElse(error(s"Date could not be read [$data]"))
+    )
+
+  implicit val byteStringFormat: JsonFormat[ByteString] =
+    JsonExtra.deriveFormatFrom[String](
+      bytes => Base64.getEncoder.encodeToString(bytes.toArray),
+      base64Str => ByteString.fromArray(Base64.getDecoder.decode(base64Str)))
+
+  case class SimpleKind(
+      kind:    String,
+      version: Int
+  )
+  case class SimpleEntry(
+      target:           Id,
+      secondaryTargets: Vector[Id],
+      kind:             SimpleKind,
+      creation:         CreationInfo,
+      value:            JsValue
+  )
+  object SimpleEntry {
+    def apply(metadataEntry: MetadataEntry): SimpleEntry =
+      SimpleEntry(
+        metadataEntry.target,
+        metadataEntry.secondaryTargets,
+        SimpleKind(metadataEntry.kind.kind, metadataEntry.kind.version),
+        metadataEntry.creation,
+        metadataEntry.value.toJson(metadataEntry.kind.jsonFormat)
+      )
   }
-  implicit val byteStringFormat: JsonFormat[ByteString] = new JsonFormat[ByteString] {
-    override def read(json: JsValue): ByteString = json match {
-      case JsString(data) => ByteString.fromArray(Base64.getDecoder.decode(data))
-      case x              => MetadataJsonProtocol.error(s"Cannot read ByteString from $x")
-    }
-    override def write(obj: ByteString): JsValue = {
-      val data = Base64.getEncoder.encodeToString(obj.toArray)
-      JsString(data)
-    }
-  }
+  case class SimpleJournalEntry(seqNr: Long, entry: SimpleEntry)
+
+  import DefaultJsonProtocol._
+  implicit def simpleKindFormat: JsonFormat[SimpleKind] = jsonFormat2(SimpleKind.apply)
+  implicit def simpleEntryFormat: JsonFormat[SimpleEntry] = jsonFormat5(SimpleEntry.apply)
+  implicit def simpleJournalEntryFormat: JsonFormat[SimpleJournalEntry] = jsonFormat2(SimpleJournalEntry.apply)
 }
 
 final case class Metadata(entries: immutable.Seq[MetadataEntry]) {
