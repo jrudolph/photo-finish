@@ -16,12 +16,9 @@ import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
-import scala.annotation.tailrec
-import scala.collection.immutable
 import scala.collection.immutable.{ TreeMap, TreeSet }
 import scala.concurrent.duration._
 import scala.concurrent.{ ExecutionContext, Future, Promise }
-import scala.language.implicitConversions
 import scala.util.control.NonFatal
 import scala.util.{ Failure, Success, Try }
 
@@ -93,7 +90,6 @@ object MetadataProcess {
             })
         }
 
-    val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
     val extractionContext = new ExtractionContext {
       def executionContext: ExecutionContext = extractionEC
       def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
@@ -101,152 +97,130 @@ object MetadataProcess {
         f(manager.config.fileInfoOf(hash).repoFile)
     }
 
+    type Handler = ProcessState => StreamEntry => ProcessState
+    case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, sideEffects: Vector[SideEffect], finished: Boolean) {
+      def run(streamEntry: StreamEntry): ProcessState = handler(this)(streamEntry)
+
+      def runEntry(envelope: MetadataEnvelope): ProcessState = copy(processState = p.processEvent(processState, envelope))
+
+      def execute[T](e: Execute[p.S, T]): ProcessState =
+        Try(e.f(processState)) match {
+          case Success((newState, sideEffects, res)) =>
+            e.promise.trySuccess(res)
+            this
+              .withState(newState)
+              .addSideEffects(sideEffects)
+          case Failure(ex) =>
+            e.promise.tryFailure(ex)
+            this
+        }
+
+      def withSeqNr(newSeqNr: Long): ProcessState = copy(seqNr = newSeqNr)
+      def withHandler(newHandler: Handler): ProcessState = copy(handler = newHandler)
+      def withState(newState: p.S): ProcessState = copy(processState = newState)
+      def addSideEffects(newSideEffects: Vector[SideEffect]): ProcessState = copy(sideEffects = sideEffects ++ newSideEffects)
+      def clearSideEffects: ProcessState = copy(sideEffects = Vector.empty)
+
+      def emit: (ProcessState, Vector[SideEffect]) =
+        if (sideEffects.nonEmpty) (clearSideEffects, sideEffects)
+        else {
+          val (newState, sideEffects) = p.sideEffects(processState, extractionContext)
+          (withState(newState), sideEffects)
+        }
+
+      def setFinished: ProcessState = copy(finished = true)
+    }
+    def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = state => {
+      case Metadata(e) =>
+        if (e.seqNr == state.seqNr + 1) {
+          state
+            .runEntry(e)
+            .withSeqNr(e.seqNr)
+        } else if (e.seqNr < state.seqNr + 1)
+          throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
+        else {
+          println(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
+          state.withSeqNr(e.seqNr)
+        }
+
+      case AllObjectsReplayed =>
+        println(s"[${p.id}] finished replaying")
+
+        // run all waiting executions
+        waitingExecutions.foldLeft(state)(_.execute(_))
+          .withHandler(ignoreDuplicateSeqNrs)
+
+      case e: Execute[p.S, t] @unchecked =>
+        state.withHandler(replaying(waitingExecutions :+ e))
+
+      case MakeSnapshot =>
+        saveSnapshot(state)
+        state
+      case ShuttingDown =>
+        saveSnapshot(state)
+        state.setFinished
+    }
+    def ignoreDuplicateSeqNrs: Handler = state => {
+      case Metadata(e) if e.seqNr <= state.seqNr =>
+        println(s"[${p.id}] at ${state.seqNr} got ${e.seqNr}. Ignoring")
+        state
+      case m: Metadata =>
+        state
+          .withHandler(liveEvents)
+          .run(m)
+
+      case e: Execute[p.S, t] @unchecked => state.execute(e)
+
+      case MakeSnapshot =>
+        saveSnapshot(state)
+        state
+      case ShuttingDown =>
+        saveSnapshot(state)
+        state.setFinished
+    }
+    def liveEvents: Handler = state => {
+      case Metadata(e) =>
+        if (e.seqNr == state.seqNr + 1) {
+          state
+            .runEntry(e)
+            .withSeqNr(e.seqNr)
+        } else if (e.seqNr < state.seqNr + 1)
+          throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
+        else {
+          println(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
+          state
+            .withSeqNr(e.seqNr)
+        }
+      case e: Execute[p.S, t] @unchecked => state.execute(e)
+
+      case MakeSnapshot =>
+        saveSnapshot(state)
+        state
+      case ShuttingDown =>
+        saveSnapshot(state)
+        state.setFinished
+
+      case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
+    }
+
+    def saveSnapshot(state: ProcessState): Unit = serializeState(p, manager)(Snapshot(p.id, p.version, state.seqNr, state.processState))
+
+    def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
+      Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
+
+    val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+    println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
+
     val processFlow =
       Flow[StreamEntry]
         .merge(Source.tick(manager.config.snapshotInterval, manager.config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
-        .statefulMapConcat[SideEffect] { () =>
-          case class Effect(sideEffects: immutable.Iterable[SideEffect], nextHandler: Handler, newSeqNr: Long, newState: p.S, runStreamEntry: StreamEntry = null) {
-            def schedule(newSideEffects: immutable.Iterable[SideEffect]): Effect = copy(sideEffects ++ newSideEffects)
-            def changeState(state: p.S): Effect = copy(newState = state)
-            def changeSeqNr(seqNr: Long): Effect = copy(newSeqNr = seqNr)
-            def changeHandler(handler: Handler): Effect = copy(nextHandler = handler)
-            def andRun(entry: StreamEntry): Effect = copy(runStreamEntry = entry)
-          }
-          val SameHandler: Handler = _ => ???
-          object Effect {
-            def empty: Effect = Effect(Vector.empty, SameHandler, -2, null.asInstanceOf[p.S])
-          }
-          implicit def effectMethods(e: Effect.type): Effect = Effect.empty
-          implicit def changeHandler(h: Handler): Effect = Effect.changeHandler(h)
-          abstract class Handler {
-            def apply(e: StreamEntry): Effect
-          }
-          var _curSeqNr: Long = -1
-          var _curState: p.S = null.asInstanceOf[p.S]
-          def currentSeqNr: Long = _curSeqNr
-          def currentState: p.S = _curState
-
-          def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = {
-            case Metadata(e) =>
-              if (e.seqNr == currentSeqNr + 1) {
-                val newState = p.processEvent(currentState, e)
-                Effect
-                  .changeSeqNr(e.seqNr)
-                  .changeState(newState)
-              } else if (e.seqNr < currentSeqNr + 1)
-                throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              else {
-                println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-                Effect.changeSeqNr(e.seqNr)
-              }
-
-            case AllObjectsReplayed =>
-              println(s"[${p.id}] finished replaying")
-
-              val (newState0, sideEffects0) = p.sideEffects(currentState, extractionContext)
-
-              // run all waiting executions
-              val (newState, sideEffects) = waitingExecutions.foldLeft((newState0, sideEffects0)) { (cur, next) =>
-                val (lastState, lastEffects) = cur
-                val (nextEffects, nextState) = execute(next, lastState)
-                (nextState, lastEffects ++ nextEffects)
-              }
-
-              Effect
-                .changeHandler(ignoreDuplicateSeqNrs)
-                .changeState(newState)
-                .schedule(sideEffects)
-
-            case e: Execute[p.S, t] @unchecked => replaying(waitingExecutions :+ e)
-
-            case MakeSnapshot                  => doSnapshot()
-            case ShuttingDown                  => shutdown()
-          }
-          def ignoreDuplicateSeqNrs: Handler = {
-            case Metadata(e) if e.seqNr <= currentSeqNr =>
-              println(s"[${p.id}] at $currentSeqNr got ${e.seqNr}. Ignoring")
-              Effect.empty
-            case m: Metadata => Effect.changeHandler(liveEvents).andRun(m)
-
-            case e: Execute[p.S, t] @unchecked =>
-              val (sideEffects, newState) = execute(e, currentState)
-              Effect
-                .changeState(newState)
-                .schedule(sideEffects)
-
-            case MakeSnapshot => doSnapshot()
-            case ShuttingDown => shutdown()
-          }
-          def liveEvents: Handler = {
-            case Metadata(e) =>
-              if (e.seqNr == currentSeqNr + 1) {
-                val newState0 = p.processEvent(currentState, e)
-                val (newState1, sideEffects) = p.sideEffects(newState0, extractionContext)
-                Effect
-                  .changeSeqNr(e.seqNr)
-                  .changeState(newState1)
-                  .schedule(sideEffects)
-              } else if (e.seqNr < currentSeqNr + 1)
-                throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-              else {
-                println(s"Got unexpected gap in seqNr ${e.seqNr} after last $currentSeqNr, ignoring...")
-                Effect
-                  .changeSeqNr(e.seqNr)
-              }
-            case e: Execute[p.S, t] @unchecked =>
-              val (sideEffects, newState) = execute(e, currentState)
-              Effect
-                .changeState(newState)
-                .schedule(sideEffects)
-
-            case MakeSnapshot       => doSnapshot()
-            case ShuttingDown       => shutdown()
-
-            case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
-          }
-          def doSnapshot(): Effect = {
-            saveSnapshot()
-            Effect.empty
-          }
-          def shutdown(): Effect = {
-            saveSnapshot()
-            closing
-          }
-          def saveSnapshot(): Unit = serializeState(p, manager)(Snapshot(p.id, p.version, currentSeqNr, currentState))
-
-          // FIXME: try to use Effect here as well (complicated because then we need to be able to stack effects
-          def execute[T](e: Execute[p.S, T], currentState: p.S): (immutable.Iterable[SideEffect], p.S) =
-            Try(e.f(currentState)) match {
-              case Success((newState, sideEffects, res)) =>
-                e.promise.trySuccess(res)
-                (sideEffects, newState)
-              case Failure(ex) =>
-                e.promise.tryFailure(ex)
-                (Nil, currentState)
-            }
-
-          lazy val closing: Handler = _ => changeHandler(SameHandler)
-
-          println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
-          _curSeqNr = snapshot.currentSeqNr
-          _curState = snapshot.state
-          var curHandler: Handler = replaying(Vector.empty)
-
-          e => {
-            @tailrec def run(sideEffects: Vector[SideEffect]): Vector[SideEffect] = {
-              val Effect(els, newHandler, newSeqNr, newState, runStreamEntry) = curHandler(e)
-              if (newHandler ne SameHandler) curHandler = newHandler
-              if (newSeqNr != -2) _curSeqNr = newSeqNr
-              if (newState != null) _curState = newState
-
-              val newSideEffects = sideEffects ++ els
-              if (runStreamEntry ne null) run(newSideEffects)
-              else newSideEffects
-            }
-            run(Vector.empty)
-          }
-        }
+        .via(statefulDetachedFlow[StreamEntry, SideEffect, ProcessState](
+          () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, finished = false),
+          _.run(_),
+          _.emit,
+          _.finished
+        ))
         .recoverWithRetries(1, {
           case ex =>
             println(s"Process for [${p.id}] failed with [${ex.getMessage}]. Aborting the process.")
@@ -463,14 +437,14 @@ object IngestionController extends MetadataProcess {
   type S = State
   type Api = Ingestion
 
-  override def version: Int = 1
-  override def initialState: State = State(Map.empty)
+  def version: Int = 1
+  def initialState: State = State(Map.empty)
 
-  override def processEvent(state: State, event: MetadataEnvelope): State = event.entry match {
+  def processEvent(state: State, event: MetadataEnvelope): State = event.entry match {
     case entry if entry.kind == IngestionData => state.add(entry.target.hash, entry.value.asInstanceOf[IngestionData])
     case _                                    => state
   }
-  override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
@@ -598,29 +572,31 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   def version: Int = 1
 
   def initialState: S = State(Map.empty)
-
   def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)
 
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
-    val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) = state.objectStates.collect {
-      case (hash, c @ CollectingDependencies(depStates)) if c.hasAllDeps =>
-        val depValues = depStates.map(_.get)
+    val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) =
+      state.objectStates
+        .collect { case (hash, c: CollectingDependencies) if c.hasAllDeps => (hash, c) }
+        .take(10)
+        .map {
+          case (hash, c @ CollectingDependencies(depStates)) if c.hasAllDeps =>
+            val depValues = depStates.map(_.get)
 
-        extractor.precondition(hash, depValues, context) match {
-          case None =>
-            // precondition met
-            (
-              (_: State).set(hash, Scheduled(depStates)),
-              (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): SideEffect
-            )
-          case Some(cause) =>
-            (
-              (_: State).set(hash, PreConditionNotMet(cause)),
-              (() => Future.successful(Vector.empty)) // FIXME: is there a better way that doesn't involve scheduling a useless process?
-            )
-        }
-
-    }.toVector.unzip
+            extractor.precondition(hash, depValues, context) match {
+              case None =>
+                // precondition met
+                (
+                  (_: State).set(hash, Scheduled(depStates)),
+                  (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): SideEffect
+                )
+              case Some(cause) =>
+                (
+                  (_: State).set(hash, PreConditionNotMet(cause)),
+                  (() => Future.successful(Vector.empty)) // FIXME: is there a better way that doesn't involve scheduling a useless process?
+                )
+            }
+        }.toVector.unzip
     if (stateChanges.isEmpty) (state, Vector.empty)
     else (stateChanges.foldLeft(state)((s, f) => f(s)), sideeffects)
   }
@@ -811,5 +787,33 @@ class TakeFromWheel(firstSeqNr: Long) extends GraphStage[FlowShape[StreamEntry, 
 
     setHandler(out, this)
     setHandler(in, waitForStart)
+  }
+}
+
+class StatefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emitF: S => (S, Vector[U]), isFinished: S => Boolean) extends GraphStage[FlowShape[T, U]] {
+  val in = Inlet[T]("StateFullDetachedFlow.in")
+  val out = Outlet[U]("StateFullDetachedFlow.out")
+  val shape: FlowShape[T, U] = FlowShape(in, out)
+  def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with InHandler with OutHandler {
+    setHandlers(in, out, this)
+
+    override def preStart(): Unit = pull(in)
+
+    private[this] var state = initialState()
+
+    override def onPush(): Unit = {
+      state = handle(state, grab(in))
+      if (isFinished(state)) completeStage()
+      else {
+        pull(in)
+        if (isAvailable(out)) onPull()
+      }
+    }
+    override def onPull(): Unit = {
+      val (newState, toEmit) = emitF(state)
+      state = newState
+      if (toEmit.nonEmpty) emitMultiple(out, toEmit)
+      if (isFinished(state)) completeStage()
+    }
   }
 }

@@ -37,7 +37,6 @@ object MetadataApp {
 
       val executor: Sink[SideEffect, Any] =
         MergeHub.source[SideEffect]
-          .buffer(10000, OverflowStrategy.fail)
           .mapAsyncUnordered(config.executorParallelism)(_().transform(Success(_)))
           .mapConcat(_.toOption.toVector.flatten)
           .watchTermination() { (mat, fut) =>
