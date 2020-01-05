@@ -10,7 +10,7 @@ object MetadataCollector extends App {
     import Settings._
 
     println("Scanning repository")
-    val map = manager.inodeMap
+    val map = scanner.inodeMap
 
     println("Sorting by inode")
     val sorted = map.toVector.sortBy(_._1).map(_._2)

@@ -28,7 +28,7 @@ object Settings {
     ExifBaseDataExtractor.instance,
     ThumbnailExtractor.instance,
     HashDataExtractor.instance,
-    FaceDataExtractor.instance,
+  //FaceDataExtractor.instance,
   )
 
   val config =
@@ -42,5 +42,5 @@ object Settings {
       8,
       10.seconds)
 
-  val manager = new RepositoryManager(config)
+  val scanner = new Scanner(config)
 }

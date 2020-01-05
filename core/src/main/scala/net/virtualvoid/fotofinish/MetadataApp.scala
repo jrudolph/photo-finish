@@ -1,7 +1,6 @@
 package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
-import akka.stream.OverflowStrategy
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.MetadataProcess.{ Journal, SideEffect }
 import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
@@ -32,7 +31,7 @@ object MetadataApp {
 
       def config: RepositoryConfig = _config
 
-      val journal = MetadataProcess.journal(Settings.manager)
+      val journal = MetadataProcess.journal(_config)
       system.registerOnTermination(journal.shutdown())
 
       val executor: Sink[SideEffect, Any] =
@@ -49,7 +48,7 @@ object MetadataApp {
           .run()
 
       def runProcess(process: MetadataProcess): process.Api =
-        MetadataProcess.asSource(process, Settings.manager, journal, extractionContext)
+        MetadataProcess.asSource(process, _config, journal, extractionContext)
           .recoverWithRetries(1, {
             case ex =>
               println(s"Process [${process.id}] failed with [$ex]")

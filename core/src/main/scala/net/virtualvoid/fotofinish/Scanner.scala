@@ -10,10 +10,9 @@ import java.nio.file.attribute.PosixFileAttributes
 
 import net.virtualvoid.fotofinish.metadata.IngestionData
 
-import scala.collection.immutable
 import scala.Console._
 
-class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
+class Scanner(config: RepositoryConfig) {
   import Scanner._
   import config._
 
@@ -30,9 +29,10 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
 
   def ensureInRepo(file: File): (Hash, IngestionData) = {
     val ufi = unixFileInfo(file.toPath)
-    val byInode = manager.inodeMap.get((ufi.dev, ufi.inode))
+    val byInode = inodeMap.get((ufi.dev, ufi.inode))
     if (byInode.isDefined) {
-      println(s"Found hard link into repo for [$file] at [${byInode.get}]")
+      // FIXME: we could also decide not to do anything if we find an existing link into the repo?
+      // println(s"Found hard link into repo for [$file] at [${byInode.get}]")
       val fi = byInode.get
       fi.hash -> IngestionData.fromFileInfo(fi.copy(originalFile = Some(file)))
     } else {
@@ -63,6 +63,22 @@ class Scanner(config: RepositoryConfig, manager: RepositoryManager) {
       res
     }
   }
+
+  // FIXME: could this be replaced by a process instead of running it every time?
+  lazy val inodeMap: Map[(Long, Long), FileInfo] =
+    scanAllRepoFiles()
+      .map { info =>
+        val UnixFileInfo(dev, ino) = Scanner.unixFileInfo(info.repoFile.toPath)
+
+        (dev, ino) -> info
+      }.toMap
+
+  private val FileNamePattern = """^[0-9a-f]{128}$""".r
+  private def scanAllRepoFiles(): Iterator[FileInfo] =
+    Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
+      .iterator
+      .map(f => Hash.fromString(config.hashAlgorithm, f.getName))
+      .map(config.fileInfoOf)
 }
 
 object Scanner {

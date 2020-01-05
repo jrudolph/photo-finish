@@ -38,12 +38,15 @@ object ClusterTest extends App {
       .filter(_.value.faces.nonEmpty)*/
     ???
 
+  // FIXME: needs to be reimplented using MetadataApp or even better as a process later on
+  private def metadataFor(hash: Hash): Metadata = ???
+
   println("Loading faces...")
   val imageFaces: immutable.Seq[(FileInfo, FaceInfo, Int)] =
     Vector("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz", "/mnt/hd/fotos/tmp/repo/net.virtualvoid.fotofinish.FaceData-v3.json.gz")
       .flatMap(loadFrom)
       .flatMap { e =>
-        val fileInfo = Settings.manager.config.fileInfoOf(e.target)
+        val fileInfo = Settings.config.fileInfoOf(e.target)
         e.value.faces.zipWithIndex.map {
           case (info, idx) => (fileInfo, info, idx)
         }
@@ -131,7 +134,7 @@ object ClusterTest extends App {
       .foreach { set =>
         val withDates =
           set.flatMap { vd =>
-            val meta = Settings.manager.metadataFor(Hash.fromString(HashAlgorithm.Sha512, vd.repoFile.getName))
+            val meta = metadataFor(Hash.fromString(HashAlgorithm.Sha512, vd.repoFile.getName))
             MetadataShortcuts.DateTaken(meta).map(dt => vd -> dt)
           }
 
@@ -199,7 +202,7 @@ object ClusterTest extends App {
 
   def fileNameForVertexData(vd: VertexData): String = {
     val file = vd.repoFile
-    val meta = Settings.manager.metadataFor(Hash.fromString(HashAlgorithm.Sha512, file.getName))
+    val meta = metadataFor(Hash.fromString(HashAlgorithm.Sha512, file.getName))
     val fileDateFormat = new SimpleDateFormat("yyyyMMdd-HHmmss")
     val dateStr = MetadataShortcuts.DateTaken(meta).map(dt => fileDateFormat.format(new java.util.Date(dt.clicks))).getOrElse("unknown")
     val fileName = s"$dateStr-${file.getName.take(ShortHash)}-${vd.faceIndex}.jpg"

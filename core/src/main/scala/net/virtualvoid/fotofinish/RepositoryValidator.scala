@@ -24,7 +24,7 @@ object RepositoryValidator extends App {
   }*/
 
   println("Scanning repository")
-  val map = Settings.manager.inodeMap
+  val map = Settings.scanner.inodeMap
 
   println("Sorting by inode")
   val sorted = map.toVector.sortBy(_._1).map(_._2)

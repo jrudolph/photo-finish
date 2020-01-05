@@ -61,7 +61,7 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, manager: RepositoryManager, journal: Journal, extractionEC: ExecutionContext)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
+  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: Journal, extractionEC: ExecutionContext)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
@@ -94,7 +94,7 @@ object MetadataProcess {
       def executionContext: ExecutionContext = extractionEC
       def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
         // FIXME: easy for now as we expect all hashes to be available as files
-        f(manager.config.fileInfoOf(hash).repoFile)
+        f(config.fileInfoOf(hash).repoFile)
     }
 
     type Handler = ProcessState => StreamEntry => ProcessState
@@ -203,17 +203,17 @@ object MetadataProcess {
       case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
     }
 
-    def saveSnapshot(state: ProcessState): Unit = serializeState(p, manager)(Snapshot(p.id, p.version, state.seqNr, state.processState))
+    def saveSnapshot(state: ProcessState): Unit = serializeState(p, config)(Snapshot(p.id, p.version, state.seqNr, state.processState))
 
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 
-    val snapshot = deserializeState(p, manager).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+    val snapshot = deserializeState(p, config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
     println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
 
     val processFlow =
       Flow[StreamEntry]
-        .merge(Source.tick(manager.config.snapshotInterval, manager.config.snapshotInterval, MakeSnapshot))
+        .merge(Source.tick(config.snapshotInterval, config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
         .via(statefulDetachedFlow[StreamEntry, SideEffect, ProcessState](
           () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, finished = false),
@@ -245,24 +245,24 @@ object MetadataProcess {
   import spray.json.DefaultJsonProtocol._
   import spray.json._
   private implicit def snapshotFormat[S: JsonFormat]: JsonFormat[Snapshot[S]] = jsonFormat4(Snapshot.apply[S])
-  private def processSnapshotFile(p: MetadataProcess, manager: RepositoryManager): File =
-    new File(manager.config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
+  private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
+    new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
 
-  private def serializeState(p: MetadataProcess, manager: RepositoryManager)(snapshot: Snapshot[p.S]): Unit = {
-    val file = processSnapshotFile(p, manager)
+  private def serializeState(p: MetadataProcess, config: RepositoryConfig)(snapshot: Snapshot[p.S]): Unit = {
+    val file = processSnapshotFile(p, config)
     val os = new GZIPOutputStream(new FileOutputStream(file))
     try {
-      implicit val sFormat: JsonFormat[p.S] = p.stateFormat(manager.config.entryFormat)
+      implicit val sFormat: JsonFormat[p.S] = p.stateFormat(config.entryFormat)
       os.write(snapshot.toJson.compactPrint.getBytes("utf8"))
     } finally os.close()
   }
-  private def deserializeState(p: MetadataProcess, manager: RepositoryManager): Option[Snapshot[p.S]] = {
-    val file = processSnapshotFile(p, manager)
+  private def deserializeState(p: MetadataProcess, config: RepositoryConfig): Option[Snapshot[p.S]] = {
+    val file = processSnapshotFile(p, config)
     if (file.exists) {
       val fis = new FileInputStream(file)
       try {
         val is = new GZIPInputStream(fis)
-        implicit val sFormat: JsonFormat[p.S] = p.stateFormat(manager.config.entryFormat)
+        implicit val sFormat: JsonFormat[p.S] = p.stateFormat(config.entryFormat)
         Try(io.Source.fromInputStream(is).mkString.parseJson.convertTo[Snapshot[p.S]])
           .map { s =>
             require(s.processId == p.id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [${p.id}].")
@@ -292,11 +292,11 @@ object MetadataProcess {
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def journal(manager: RepositoryManager)(implicit system: ActorSystem): Journal = {
+  def journal(config: RepositoryConfig)(implicit system: ActorSystem): Journal = {
     import system.dispatcher
 
     val killSwitch = KillSwitches.shared("kill-journal")
-    val seqNrFile = new File(manager.config.metadataDir, "metadata.seqnr.txt")
+    val seqNrFile = new File(config.metadataDir, "metadata.seqnr.txt")
     def readSeqNr(): Long = Try(scala.io.Source.fromFile(seqNrFile).mkString.toLong).getOrElse(-1)
     def writeSeqNr(last: Long): Unit = {
       // FIXME: what are the performance implications of closing every time?
@@ -315,7 +315,7 @@ object MetadataProcess {
               val thisSeqNr = lastSeqNo + 1
 
               val entryWithSeqNr = MetadataEnvelope(thisSeqNr, entry)
-              writeJournalEntry(manager, entryWithSeqNr)
+              writeJournalEntry(config, entryWithSeqNr)
               // update seqnr last
               writeSeqNr(thisSeqNr)
               lastSeqNo += 1
@@ -334,12 +334,12 @@ object MetadataProcess {
       // file
       after(100.millis, system.scheduler) {
         Future.successful {
-          if (manager.config.allMetadataFile.exists())
-            FileIO.fromPath(manager.config.allMetadataFile.toPath)
+          if (config.allMetadataFile.exists())
+            FileIO.fromPath(config.allMetadataFile.toPath)
               .via(Compression.gunzip())
               .via(Framing.delimiter(ByteString("\n"), 1000000))
               .map(_.utf8String)
-              .mapConcat(readJournalEntry(manager, _).toVector)
+              .mapConcat(readJournalEntry(config, _).toVector)
           else
             Source.empty
         }
@@ -382,8 +382,8 @@ object MetadataProcess {
     }
   }
 
-  private def readJournalEntry(manager: RepositoryManager, entry: String): Option[MetadataEnvelope] = {
-    import manager.config.entryFormat
+  private def readJournalEntry(config: RepositoryConfig, entry: String): Option[MetadataEnvelope] = {
+    import config.entryFormat
     try Some(entry.parseJson.convertTo[MetadataEnvelope])
     catch {
       case NonFatal(ex) =>
@@ -393,10 +393,10 @@ object MetadataProcess {
     }
   }
 
-  private def writeJournalEntry(manager: RepositoryManager, envelope: MetadataEnvelope): Unit = {
-    val fos = new FileOutputStream(manager.config.allMetadataFile, true)
+  private def writeJournalEntry(config: RepositoryConfig, envelope: MetadataEnvelope): Unit = {
+    val fos = new FileOutputStream(config.allMetadataFile, true)
     val out = new GZIPOutputStream(fos)
-    import manager.config.entryFormat
+    import config.entryFormat
     out.write(envelope.toJson.compactPrint.getBytes("utf8"))
     out.write('\n')
     out.close()

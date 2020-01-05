@@ -14,8 +14,8 @@ import metadata._
 object Relinker {
   private final case class FileAndMetadata(fileInfo: FileInfo, metadata: Metadata)
 
-  def byOriginalFileName(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
-    val parentDir = new File(manager.config.linkRootDir, "by-original-name")
+  def byOriginalFileName(config: RepositoryConfig)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
+    val parentDir = new File(config.linkRootDir, "by-original-name")
 
     MetadataShortcuts.OriginalFullFilePaths(fileAndMetadata.metadata)
       .map { p =>
@@ -26,13 +26,13 @@ object Relinker {
       }
   }
 
-  def byYearMonth(manager: RepositoryManager)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
+  def byYearMonth(config: RepositoryConfig)(fileAndMetadata: FileAndMetadata): immutable.Seq[File] = {
     def dateDir(dateTaken: Option[DateTime]): File = {
       val sub = dateTaken match {
         case None       => "unknown"
         case Some(date) => f"${date.year}%04d/${date.month}%02d"
       }
-      val subDir = new File(manager.config.linkRootDir, "by-date")
+      val subDir = new File(config.linkRootDir, "by-date")
       val res = new File(subDir, sub)
       res.mkdirs()
       res
@@ -55,14 +55,17 @@ object Relinker {
     val dir = dateDir(date)
     new File(dir, fileName) :: Nil
   }
-  def createDirStructure(manager: RepositoryManager)(locator: FileAndMetadata => immutable.Seq[File]): Unit = {
-    manager.allRepoFiles()
+  // FIXME
+  private def metadataFor(hash: Hash): Metadata = ???
+  def createDirStructure()(locator: FileAndMetadata => immutable.Seq[File]): Unit = {
+    // FIXME
+    (null: Seq[FileInfo])
       .zipWithIndex
       .grouped(1000)
       .foreach { group =>
         group.toVector.par
           .map {
-            case (fileInfo, i) => FileAndMetadata(fileInfo, manager.metadataFor(fileInfo.hash)) -> i
+            case (fileInfo, i) => FileAndMetadata(fileInfo, metadataFor(fileInfo.hash)) -> i
           }
           .foreach {
             case (f, idx) =>
