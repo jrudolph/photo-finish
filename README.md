@@ -1,28 +1,16 @@
-# Photo Finish
+# Photo Finish - A media storage and metadata repository experiment
 
-## Ingestion
+A central archive for personal media files.
 
-Two possibilities
+## Guiding principles
 
- * Scan manually organized directories and create hard-links where we like them to be
- * Offer ingestion directories where files are only kept during ingestion
-
-Process:
- * When ingestion is started
-   * Per file
-      * note original file-name relative to ingestion dir
-      * calculate primary check-sum
-      * check if file is already in storage
-        * if no, create hard-link to store
-        * if yes, do nothing
-      * create initial metadata blob
-      
-Metadata:
- * Metadata is append only, i.e. we just record events that someone (person) or something (software) has added metadata
- * Merging metadata from different sources means just merging events (maybe sorting by creation date of metadata unit) 
- * Use either manual or automatic conflict resolution to figure out conflicts (can come from multi-user or multi-device or multi-software
-   deployments)       
-
-Questions
- * Automatic or manual ingestion?
-  
+ * Data in the the repository is immutable
+ * Data is stored in a content-addressable way leading to automatic deduplication
+ * Metadata for the stored data can be stored in the repository or next to it in a simple enough format to allow access
+   to metadata in the future
+ * Metadata can be either entered manually (ownership data, comments, ratings, etc.) or
+   be extracted by pluggable metadata extractors (file metadata like EXIF, basic file information, contents of file containers,
+   keyframes of videos, text content of PDFs, any summary of file you might want to query)
+ * Metadata Processes can enumerate all the existing metadata and do any kind of aggregation of the total data and
+   provide access to it
+ * Complete processing might take a long time, so it needs to be incremental
