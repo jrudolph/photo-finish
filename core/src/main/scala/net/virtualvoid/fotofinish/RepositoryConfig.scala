@@ -17,7 +17,8 @@ final case class RepositoryConfig(
     knownMetadataKinds:  Set[MetadataKind],
     autoExtractors:      Set[MetadataExtractor],
     executorParallelism: Int,
-    snapshotInterval:    FiniteDuration
+    snapshotInterval:    FiniteDuration,
+    snapshotOffset:      Long // only create a new snapshot if this many events have been processed since (because replaying will likely be faster otherwise)
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")

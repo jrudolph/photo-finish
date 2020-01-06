@@ -40,7 +40,8 @@ object Settings {
       knownMetadataKinds,
       autoExtractors,
       8,
-      10.seconds)
+      30.seconds,
+      10000)
 
   val scanner = new Scanner(config)
 }

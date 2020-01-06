@@ -19,7 +19,7 @@ import spray.json.JsonFormat
 
 import scala.collection.immutable.{ TreeMap, TreeSet }
 import scala.concurrent.duration._
-import scala.concurrent.{ ExecutionContext, Future, Promise }
+import scala.concurrent.{ Await, ExecutionContext, Future, Promise }
 import scala.util.control.NonFatal
 import scala.util.{ Failure, Success, Try }
 
@@ -45,9 +45,21 @@ trait MetadataProcess {
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S]
   /** Allows to prepare state loaded from snapshot */
   def initializeStateSnapshot(state: S): S = state
+
+  type StateEntryT
+  def stateAsEntries(state: S): Iterator[StateEntryT]
+  def entriesAsState(entries: Iterable[StateEntryT]): S
+  def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT]
+}
+trait SingleEntryState extends MetadataProcess {
+  override type StateEntryT = S
+
+  def stateAsEntries(state: S): Iterator[S] = Iterator(state)
+  def entriesAsState(entries: Iterable[S]): S = entries.head
+  def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S] = stateFormat
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S]
 }
 
 object MetadataProcess {
@@ -62,7 +74,7 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: Journal, extractionEC: ExecutionContext)(implicit ec: ExecutionContext): Source[SideEffect, p.Api] = {
+  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: Journal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[SideEffect, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
@@ -99,7 +111,7 @@ object MetadataProcess {
     }
 
     type Handler = ProcessState => StreamEntry => ProcessState
-    case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, sideEffects: Vector[SideEffect], finished: Boolean) {
+    case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, sideEffects: Vector[SideEffect], lastSnapshotAt: Long, hasFinishedReplaying: Boolean, finished: Boolean) {
       def run(streamEntry: StreamEntry): ProcessState = handler(this)(streamEntry)
 
       def runEntry(envelope: MetadataEnvelope): ProcessState = copy(processState = p.processEvent(processState, envelope))
@@ -119,17 +131,31 @@ object MetadataProcess {
       def withSeqNr(newSeqNr: Long): ProcessState = copy(seqNr = newSeqNr)
       def withHandler(newHandler: Handler): ProcessState = copy(handler = newHandler)
       def withState(newState: p.S): ProcessState = copy(processState = newState)
+      def withLastSnapshotAt(newValue: Long): ProcessState = copy(lastSnapshotAt = newValue)
+      def withLastSnapshotNow: ProcessState = copy(lastSnapshotAt = seqNr)
       def addSideEffects(newSideEffects: Vector[SideEffect]): ProcessState = copy(sideEffects = sideEffects ++ newSideEffects)
       def clearSideEffects: ProcessState = copy(sideEffects = Vector.empty)
 
       def emit: (ProcessState, Vector[SideEffect]) =
-        if (sideEffects.nonEmpty) (clearSideEffects, sideEffects)
-        else {
-          val (newState, sideEffects) = p.sideEffects(processState, extractionContext)
-          (withState(newState), sideEffects)
-        }
+        if (hasFinishedReplaying)
+          if (sideEffects.nonEmpty) (clearSideEffects, sideEffects)
+          else {
+            val (newState, sideEffects) = p.sideEffects(processState, extractionContext)
+            (withState(newState), sideEffects)
+          }
+        else
+          (this, Vector.empty)
 
+      def setFinishedReplaying: ProcessState = copy(hasFinishedReplaying = true)
       def setFinished: ProcessState = copy(finished = true)
+
+      def saveSnapshot(force: Boolean = false): ProcessState = if ((lastSnapshotAt + config.snapshotOffset < seqNr) || (force && lastSnapshotAt < seqNr)) {
+        val started = System.nanoTime()
+        serializeState(p, config)(Snapshot(p.id, p.version, seqNr, processState))
+        val lasted = System.nanoTime() - started
+        println(s"[${p.id}] Serializing state in ${lasted / 1000000} ms")
+        this.withLastSnapshotNow
+      } else this
     }
     def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = state => {
       case Metadata(e) =>
@@ -149,17 +175,15 @@ object MetadataProcess {
 
         // run all waiting executions
         waitingExecutions.foldLeft(state)(_.execute(_))
+          .saveSnapshot()
+          .setFinishedReplaying
           .withHandler(ignoreDuplicateSeqNrs)
 
       case e: Execute[p.S, t] @unchecked =>
         state.withHandler(replaying(waitingExecutions :+ e))
 
-      case MakeSnapshot =>
-        saveSnapshot(state)
-        state
-      case ShuttingDown =>
-        saveSnapshot(state)
-        state.setFinished
+      case MakeSnapshot => state.saveSnapshot()
+      case ShuttingDown => state.saveSnapshot(force = true).setFinished
     }
     def ignoreDuplicateSeqNrs: Handler = state => {
       case Metadata(e) if e.seqNr <= state.seqNr =>
@@ -172,12 +196,8 @@ object MetadataProcess {
 
       case e: Execute[p.S, t] @unchecked => state.execute(e)
 
-      case MakeSnapshot =>
-        saveSnapshot(state)
-        state
-      case ShuttingDown =>
-        saveSnapshot(state)
-        state.setFinished
+      case MakeSnapshot                  => state.saveSnapshot()
+      case ShuttingDown                  => state.saveSnapshot(force = true).setFinished
     }
     def liveEvents: Handler = state => {
       case Metadata(e) =>
@@ -194,21 +214,10 @@ object MetadataProcess {
         }
       case e: Execute[p.S, t] @unchecked => state.execute(e)
 
-      case MakeSnapshot =>
-        saveSnapshot(state)
-        state
-      case ShuttingDown =>
-        saveSnapshot(state)
-        state.setFinished
+      case MakeSnapshot                  => state.saveSnapshot()
+      case ShuttingDown                  => state.saveSnapshot(force = true).setFinished
 
-      case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
-    }
-
-    def saveSnapshot(state: ProcessState): Unit = {
-      val started = System.nanoTime()
-      serializeState(p, config)(Snapshot(p.id, p.version, state.seqNr, state.processState))
-      val lasted = System.nanoTime() - started
-      println(s"[${p.id}] Serializing state in ${lasted / 1000000} ms")
+      case AllObjectsReplayed            => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
     }
 
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
@@ -222,7 +231,7 @@ object MetadataProcess {
         .merge(Source.tick(config.snapshotInterval, config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
         .via(statefulDetachedFlow[StreamEntry, SideEffect, ProcessState](
-          () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, finished = false),
+          () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, lastSnapshotAt = snapshot.currentSeqNr, hasFinishedReplaying = false, finished = false),
           _.run(_),
           _.emit,
           _.finished
@@ -247,45 +256,73 @@ object MetadataProcess {
       .viaMat(processFlow)(Keep.right)
   }
 
+  // FIXME: join with header
   private case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
   import spray.json.DefaultJsonProtocol._
   import spray.json._
-  private implicit def snapshotFormat[S: JsonFormat]: JsonFormat[Snapshot[S]] = jsonFormat4(Snapshot.apply[S])
   private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
     new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
 
+  private case class SnapshotHeader(processId: String, processVersion: Int, currentSeqNr: Long)
+  private implicit val headerFormat = jsonFormat3(SnapshotHeader.apply)
   private def serializeState(p: MetadataProcess, config: RepositoryConfig)(snapshot: Snapshot[p.S]): Unit = {
     val targetFile = processSnapshotFile(p, config)
     val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
     val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
+
     try {
-      implicit val sFormat: JsonFormat[p.S] = p.stateFormat(config.entryFormat)
-      os.write(snapshot.toJson.compactPrint.getBytes("utf8"))
+      implicit val seFormat: JsonFormat[p.StateEntryT] = p.stateEntryFormat(config.entryFormat)
+      os.write(SnapshotHeader(snapshot.processId, snapshot.processVersion, snapshot.currentSeqNr).toJson.compactPrint.getBytes("utf8"))
+      os.write('\n')
+      p.stateAsEntries(snapshot.state).foreach { entry =>
+        os.write(entry.toJson.compactPrint.getBytes("utf8"))
+        os.write('\n')
+      }
     } finally os.close()
     Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
   }
-  private def deserializeState(p: MetadataProcess, config: RepositoryConfig): Option[Snapshot[p.S]] = {
+  private def deserializeState(p: MetadataProcess, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[p.S]] = {
+    import system.dispatcher
+
     val file = processSnapshotFile(p, config)
     if (file.exists) {
-      val fis = new FileInputStream(file)
-      try {
-        val is = new GZIPInputStream(fis)
-        implicit val sFormat: JsonFormat[p.S] = p.stateFormat(config.entryFormat)
-        Try(io.Source.fromInputStream(is).mkString.parseJson.convertTo[Snapshot[p.S]])
-          .map { s =>
-            require(s.processId == p.id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [${p.id}].")
-            require(s.processVersion == p.version, s"Wrong version in snapshot [${s.processVersion}]. Expected [${p.version}].")
+      implicit val seFormat: JsonFormat[p.StateEntryT] = p.stateEntryFormat(config.entryFormat)
 
-            Some(s.copy(state = p.initializeStateSnapshot(s.state)))
+      val headerAndEntriesF =
+        FileIO.fromPath(file.toPath)
+          .via(Compression.gunzip())
+          .via(Framing.delimiter(ByteString("\n"), 1000000000))
+          .map(_.utf8String)
+          .prefixAndTail(1)
+          .runWith(Sink.head)
+          .flatMap {
+            case (Seq(header), entries) =>
+              val h = header.parseJson.convertTo[SnapshotHeader]
+              entries
+                .map(_.parseJson.convertTo[p.StateEntryT])
+                .runWith(Sink.seq)
+                .map(es =>
+                  Snapshot[p.S](h.processId, h.processVersion, h.currentSeqNr, p.entriesAsState(es))
+                )
           }
-          .recover {
-            case NonFatal(ex) =>
-              println(s"Reading snapshot failed because of ${ex.getMessage}. Discarding snapshot.")
-              ex.printStackTrace()
-              None
-          }
-          .get
-      } finally fis.close()
+
+      // FIXME
+      val hs = Await.ready(headerAndEntriesF, 60.seconds)
+
+      hs.value.get
+        .map { s =>
+          require(s.processId == p.id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [${p.id}].")
+          require(s.processVersion == p.version, s"Wrong version in snapshot [${s.processVersion}]. Expected [${p.version}].")
+
+          Some(s.copy(state = p.initializeStateSnapshot(s.state)))
+        }
+        .recover {
+          case NonFatal(ex) =>
+            println(s"Reading snapshot failed because of ${ex.getMessage}. Discarding snapshot.")
+            ex.printStackTrace()
+            None
+        }
+        .get
     } else
       None
   }
@@ -414,7 +451,7 @@ object MetadataProcess {
   }
 }
 
-object GetAllObjectsProcess extends MetadataProcess {
+object GetAllObjectsProcess extends MetadataProcess with SingleEntryState {
   case class State(knownHashes: Set[Hash])
   type S = State
   type Api = () => Future[Set[Hash]]
@@ -439,7 +476,7 @@ trait Ingestion {
   def ingestionDataSink: Sink[(Hash, IngestionData), Any]
   def ingest(hash: Hash, data: IngestionData): Unit
 }
-object IngestionController extends MetadataProcess {
+object IngestionController extends MetadataProcess with SingleEntryState {
   case class State(datas: Map[Hash, Vector[IngestionData]]) {
     def add(hash: Hash, data: IngestionData): State =
       copy(datas = datas + (hash -> (datas.getOrElse(hash, Vector.empty) :+ data)))
@@ -499,7 +536,7 @@ object IngestionController extends MetadataProcess {
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess with SingleEntryState {
   sealed trait DependencyState {
     def exists: Boolean
     def get: MetadataEntry
@@ -705,6 +742,15 @@ object PerObjectMetadataCollector extends MetadataProcess {
     implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
 
     jsonFormat1(State.apply _)
+  }
+
+  override type StateEntryT = (Hash, Metadata)
+
+  override def stateAsEntries(state: State): Iterator[(Hash, Metadata)] = state.metadata.iterator
+  override def entriesAsState(entries: Iterable[(Hash, Metadata)]): State = State(TreeMap(entries.toSeq: _*))
+  override def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, Metadata)] = {
+    implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
+    implicitly[JsonFormat[(Hash, Metadata)]]
   }
 }
 
