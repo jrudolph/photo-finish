@@ -1,6 +1,7 @@
 package net.virtualvoid.fotofinish
 
 import java.io.{ File, FileInputStream, FileOutputStream }
+import java.nio.file.{ Files, StandardCopyOption }
 import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
 
 import akka.actor.ActorSystem
@@ -203,7 +204,12 @@ object MetadataProcess {
       case AllObjectsReplayed => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
     }
 
-    def saveSnapshot(state: ProcessState): Unit = serializeState(p, config)(Snapshot(p.id, p.version, state.seqNr, state.processState))
+    def saveSnapshot(state: ProcessState): Unit = {
+      val started = System.nanoTime()
+      serializeState(p, config)(Snapshot(p.id, p.version, state.seqNr, state.processState))
+      val lasted = System.nanoTime() - started
+      println(s"[${p.id}] Serializing state in ${lasted / 1000000} ms")
+    }
 
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
@@ -249,12 +255,14 @@ object MetadataProcess {
     new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
 
   private def serializeState(p: MetadataProcess, config: RepositoryConfig)(snapshot: Snapshot[p.S]): Unit = {
-    val file = processSnapshotFile(p, config)
-    val os = new GZIPOutputStream(new FileOutputStream(file))
+    val targetFile = processSnapshotFile(p, config)
+    val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
+    val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
     try {
       implicit val sFormat: JsonFormat[p.S] = p.stateFormat(config.entryFormat)
       os.write(snapshot.toJson.compactPrint.getBytes("utf8"))
     } finally os.close()
+    Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
   }
   private def deserializeState(p: MetadataProcess, config: RepositoryConfig): Option[Snapshot[p.S]] = {
     val file = processSnapshotFile(p, config)
