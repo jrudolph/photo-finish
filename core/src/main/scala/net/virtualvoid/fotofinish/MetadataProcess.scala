@@ -333,11 +333,13 @@ object MetadataProcess {
       // add some delay which should help to make sure that live stream is running and connected when we start reading the
       // file
       after(100.millis, system.scheduler) {
+        val highestSeqNr = readSeqNr()
         Future.successful {
           if (config.allMetadataFile.exists())
             FileIO.fromPath(config.allMetadataFile.toPath)
               .via(Compression.gunzip())
               .via(Framing.delimiter(ByteString("\n"), 1000000))
+              .take(highestSeqNr) // try not to read half-written entries
               .map(_.utf8String)
               .mapConcat(readJournalEntry(config, _).toVector)
           else
