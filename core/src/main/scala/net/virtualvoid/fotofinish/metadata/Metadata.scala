@@ -55,6 +55,7 @@ object Creator {
       case e: Extractor => e.toJson + ("type" -> JsString("Extractor"))
     }
   }
+  def fromExtractor(extractor: MetadataExtractor): Creator = Extractor(extractor.kind, extractor.version)
 }
 
 case class CreationInfo(
@@ -176,7 +177,7 @@ trait MetadataExtractor {
           Hashed(hash),
           Vector.empty,
           metadataKind,
-          CreationInfo(DateTime.now, inferred = true, Extractor(kind, version)),
+          CreationInfo(DateTime.now, inferred = true, Creator.fromExtractor(this)),
           value))(ctx.executionContext)
 
   /**
