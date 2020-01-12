@@ -164,14 +164,12 @@ object MetadataProcess {
             .runEntry(e)
             .withSeqNr(e.seqNr)
         } else if (e.seqNr < state.seqNr + 1)
-          throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
-        else {
-          println(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
-          state.withSeqNr(e.seqNr)
-        }
+          throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last ${state.seqNr}")
+        else
+          throw new IllegalStateException(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}")
 
       case AllObjectsReplayed =>
-        println(s"[${p.id}] finished replaying")
+        println(s"[${p.id}] finished replaying after [${state.seqNr}]")
 
         // run all waiting executions
         waitingExecutions.foldLeft(state)(_.execute(_))
@@ -207,11 +205,9 @@ object MetadataProcess {
             .withSeqNr(e.seqNr)
         } else if (e.seqNr < state.seqNr + 1)
           throw new IllegalStateException(s"Got unexpected duplicate seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
-        else {
-          println(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}, ignoring...")
-          state
-            .withSeqNr(e.seqNr)
-        }
+        else
+          throw new IllegalStateException(s"Got unexpected gap in seqNr ${e.seqNr} after last ${state.seqNr}")
+
       case e: Execute[p.S, t] @unchecked => state.execute(e)
 
       case MakeSnapshot                  => state.saveSnapshot()
