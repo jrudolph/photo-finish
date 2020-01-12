@@ -14,7 +14,11 @@ object MetadataConverter extends App {
   implicit val system = ActorSystem()
   import system.dispatcher
 
-  val app = MetadataApp(Settings.config)
+  val app =
+    MetadataApp(
+      Settings.config
+        .copy(autoExtractors = Set.empty)
+    )
 
   case class Entry(
       kind:    String,
@@ -39,9 +43,12 @@ object MetadataConverter extends App {
     val (kind, creator) = kindAndCreator(entry.kind, entry.version)
     val inferred = kind != IngestionData
     val value: kind.T = entry.data.convertTo(kind.jsonFormat)
+    val newHash = entry.forData match {
+      case Hash(HashAlgorithm.Sha512, data) => Hash(HashAlgorithm.Sha512T160, data.take(HashAlgorithm.Sha512T160.byteLength))
+    }
 
     MetadataEntry[kind.T](
-      Hashed(entry.forData),
+      Hashed(newHash),
       Vector.empty,
       kind,
       CreationInfo(
