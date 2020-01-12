@@ -41,7 +41,17 @@ class Scanner(config: RepositoryConfig) {
       // make sure to get original data before moving / linking files around
       val res = hash -> IngestionData.fromFileInfo(FileInfo(hash, inRepo, Some(file)))
 
-      if (!inRepo.exists()) {
+      if (inRepo.exists())
+        if (ufi == unixFileInfo(inRepo.toPath))
+          println(s"Already in repo [$file] (as determined by hash), file already linked $YELLOW(inodeMap incomplete?)$RESET")
+        else if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath())) {
+          println(s"Already in repo [$file] (as determined by hash), ${MAGENTA}replacing with link$RESET")
+          val tmpPath = Paths.get(file.getAbsolutePath + ".tmp")
+          Files.createLink(tmpPath, inRepo.toPath)
+          Files.move(tmpPath, file.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } else
+          println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET")
+      else {
         println(s"${GREEN}Creating repo file$RESET for [$file] at [$inRepo] exists: ${inRepo.exists()}")
         Files.createDirectories(inRepo.getParentFile.toPath)
         if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath()))
@@ -50,14 +60,6 @@ class Scanner(config: RepositoryConfig) {
           Files.copy(file.toPath, inRepo.toPath)
 
         inRepo.setWritable(false)
-      } else {
-        if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath())) {
-          println(s"Already in repo [$file] (as determined by hash), ${MAGENTA}replacing with link$RESET")
-          val tmpPath = Paths.get(file.getAbsolutePath + ".tmp")
-          Files.createLink(tmpPath, inRepo.toPath)
-          Files.move(tmpPath, file.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-        } else
-          println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET")
       }
 
       res
