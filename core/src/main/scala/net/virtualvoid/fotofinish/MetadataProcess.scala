@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish
 
-import java.io.{ File, FileInputStream, FileOutputStream }
+import java.io.{ File, FileOutputStream }
 import java.nio.file.{ Files, StandardCopyOption }
-import java.util.zip.{ GZIPInputStream, GZIPOutputStream }
+import java.util.zip.{ GZIPOutputStream, ZipException }
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model.DateTime
@@ -644,9 +644,9 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): Unit = ()
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
+    import JsonExtra._
     import spray.json.DefaultJsonProtocol._
     import spray.json._
-    import JsonExtra._
 
     implicit def missingFormat: JsonFormat[Missing] = jsonFormat2(Missing)
     implicit def existingFormat: JsonFormat[Existing] = jsonFormat1(Existing)
@@ -701,14 +701,22 @@ trait MetadataApi {
 }
 
 object PerObjectMetadataCollector extends MetadataProcess {
+  sealed trait ParsedOrNot {
+    def metadata: Metadata
+  }
+  case class Parsed(metadata: Metadata) extends ParsedOrNot
+  case class NotParsed(data: String, f: () => Metadata) extends ParsedOrNot {
+    override def metadata: Metadata = f()
+  }
   case class State(
-      metadata: TreeMap[Hash, Metadata]
+      metadata: TreeMap[Hash, ParsedOrNot]
   ) {
     def handle(entry: MetadataEntry): State = metadata.get(entry.target.hash) match {
-      case Some(Metadata(existing)) =>
-        State(metadata + (entry.target.hash -> Metadata(existing :+ entry)))
-      case None => State(metadata + (entry.target.hash -> Metadata(Vector(entry))))
+      case Some(m) => State(metadata + (entry.target.hash -> Parsed(Metadata(m.metadata.entries :+ entry))))
+      case None    => State(metadata + (entry.target.hash -> Parsed(Metadata(Vector(entry)))))
     }
+    def metadataFor(hash: Hash): Metadata = metadata.get(hash).map(_.metadata).getOrElse(Metadata(Vector.empty))
+    def knownHashes: Iterable[Hash] = metadata.keys
   }
 
   override type S = State
@@ -722,28 +730,33 @@ object PerObjectMetadataCollector extends MetadataProcess {
   override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataApi =
     new MetadataApi {
       def metadataFor(id: Id): Future[Metadata] =
-        handleWithState.access { state => state.metadata.getOrElse(id.hash, Metadata(Vector.empty)) }
+        handleWithState.access { state => state.metadataFor(id.hash) }
       override def knownObjects(): Future[TreeSet[Id]] =
-        handleWithState.access { state => TreeSet(state.metadata.keys.map(Hashed(_): Id).toVector: _*) }
+        handleWithState.access { state => TreeSet(state.knownHashes.map(Hashed(_): Id).toVector: _*) }
     }
 
-  import spray.json.DefaultJsonProtocol._
-  implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
-    JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))
+  override type StateEntryT = (Hash, ParsedOrNot)
 
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
+  override def stateAsEntries(state: State): Iterator[(Hash, ParsedOrNot)] = state.metadata.iterator
+  override def entriesAsState(entries: Iterable[(Hash, ParsedOrNot)]): State = State(TreeMap(entries.toSeq: _*))
+  override def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, ParsedOrNot)] = {
+    import spray.json._
+    import spray.json.DefaultJsonProtocol._
+    implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
+      JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))
+
     implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
+    implicit def parsedOrNotFormat: JsonFormat[ParsedOrNot] = new JsonFormat[ParsedOrNot] {
+      override def read(json: JsValue): ParsedOrNot = json match {
+        case JsString(str) => NotParsed(str, () => str.parseJson.convertTo[Metadata])
+      }
+      override def write(obj: ParsedOrNot): JsValue = obj match {
+        case NotParsed(str, f) => JsString(str)
+        case Parsed(metadata)  => JsString(metadata.toJson.compactPrint)
+      }
+    }
 
-    jsonFormat1(State.apply _)
-  }
-
-  override type StateEntryT = (Hash, Metadata)
-
-  override def stateAsEntries(state: State): Iterator[(Hash, Metadata)] = state.metadata.iterator
-  override def entriesAsState(entries: Iterable[(Hash, Metadata)]): State = State(TreeMap(entries.toSeq: _*))
-  override def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, Metadata)] = {
-    implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
-    implicitly[JsonFormat[(Hash, Metadata)]]
+    implicitly[JsonFormat[(Hash, ParsedOrNot)]]
   }
 }
 
