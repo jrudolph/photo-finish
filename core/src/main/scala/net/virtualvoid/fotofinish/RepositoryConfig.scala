@@ -53,9 +53,11 @@ final case class RepositoryConfig(
 
     val dir = new File(storageDir, s"by-${hashAlgorithm.name}/${prefix.take(2)}/")
     import Scanner._
-    dir.listFiles(byFileName(name => name.startsWith(prefix) && name.length == hashAlgorithm.hexStringLength))
-      .headOption
-      .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
+    if (dir.exists())
+      dir.listFiles(byFileName(name => name.startsWith(prefix) && name.length == hashAlgorithm.hexStringLength))
+        .headOption
+        .map(f => fileInfoOf(Hash.fromString(hashAlgorithm, f.getName)))
+    else None
   }
 
   def destinationsFor(entry: MetadataEntry): Seq[File] =
