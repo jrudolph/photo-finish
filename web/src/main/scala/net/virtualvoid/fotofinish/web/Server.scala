@@ -52,9 +52,9 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
   lazy val images: Route =
     concat(
-      pathPrefix("sha512") {
+      pathPrefix(app.config.hashAlgorithm.name) {
         concat(
-          pathPrefix(FileInfoBySha512Hash) { fileInfo =>
+          pathPrefix(FileInfoByDefaultHash) { fileInfo =>
             onSuccess(app.metadataFor(fileInfo.id)) { meta =>
               concat(
                 path("raw") {
@@ -125,9 +125,9 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
   val HashPrefix = PathMatcher(s"[0-9a-fA-F]{2,${HashAlgorithm.Sha512.hexStringLength - 1}}".r)
 
-  val FileInfoBySha512Hash: PathMatcher1[FileInfo] =
-    PathMatcher(s"[0-9a-fA-F]{${HashAlgorithm.Sha512.hexStringLength}}".r).map { hash =>
-      app.config.fileInfoOf(Hash.fromString(HashAlgorithm.Sha512, hash))
+  val FileInfoByDefaultHash: PathMatcher1[FileInfo] =
+    PathMatcher(s"[0-9a-fA-F]{${app.config.hashAlgorithm.hexStringLength}}".r).map { hash =>
+      app.config.fileInfoOf(Hash.fromString(app.config.hashAlgorithm, hash))
     }
 
   def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
@@ -156,7 +156,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
   }
 
   def imageDataForId(id: Id): Future[Option[GalleriaImageData]] = app.metadataFor(id).map { meta =>
-    val imageBase = s"/images/sha512/${id.hash.asHexString}/"
+    val imageBase = s"/images/${id.hash.hashAlgorithm.name}/${id.hash.asHexString}/"
 
     import MetadataShortcuts._
 

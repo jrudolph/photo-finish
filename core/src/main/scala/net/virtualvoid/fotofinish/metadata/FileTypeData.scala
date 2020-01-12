@@ -5,7 +5,6 @@ import net.virtualvoid.fotofinish.Hash
 import spray.json.JsonFormat
 
 import scala.concurrent.Future
-import scala.util.Try
 
 final case class FileTypeData(
     extension: String,

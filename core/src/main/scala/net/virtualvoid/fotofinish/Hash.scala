@@ -14,25 +14,29 @@ sealed trait HashAlgorithm {
   def bitLength: Int
   def byteLength: Int
   def hexStringLength: Int
+  def underlying: Option[HashAlgorithm]
   def apply(file: File): Hash
 
-  protected def algorithm: String
+  //protected def algorithm: String
 }
 object HashAlgorithm {
   val Sha512: HashAlgorithm = new Impl("SHA-512")
-  val Algorithms = Vector(Sha512)
+  // SHA-512 truncated to 160 bits (which is still big enough to avoid random collision (though not necessarily
+  // against a collision attempted by an attacker)
+  val Sha512T160: HashAlgorithm = new Truncated(160, Sha512)
+  val Algorithms = Vector(Sha512, Sha512T160)
   val StepSize = 65536
 
   def byName(name: String): Option[HashAlgorithm] =
     name match {
-      case "sha-512" => Some(Sha512)
-      case _         => Algorithms.find(_.name == name)
+      case "sha-512-t160" => Some(Sha512T160)
+      case "sha-512"      => Some(Sha512)
+      case _              => Algorithms.find(_.name == name)
     }
 
-  private class Impl(val algorithm: String) extends HashAlgorithm { hashAlgorithm =>
+  private class Impl(algorithm: String) extends HashAlgorithm { hashAlgorithm =>
+    val name: String = algorithm.toLowerCase
     require(!name.contains(":"))
-
-    override def name: String = algorithm.toLowerCase
 
     private def createDigest(): MessageDigest =
       MessageDigest.getInstance(algorithm)
@@ -40,6 +44,7 @@ object HashAlgorithm {
     val byteLength: Int = createDigest().getDigestLength
     val bitLength: Int = byteLength * 8
     val hexStringLength: Int = byteLength * 2 // one hex char per 4 bits
+    def underlying: Option[HashAlgorithm] = None
 
     def apply(file: File): Hash = {
       val digest = createDigest()
@@ -56,6 +61,17 @@ object HashAlgorithm {
 
       val hashData = try hashStep() finally fis.close()
       Hash(hashAlgorithm, hashData)
+    }
+  }
+  private class Truncated(val bitLength: Int, _underlying: HashAlgorithm) extends HashAlgorithm {
+    require(bitLength % 8 == 0, s"Hash must be truncated at byte boundaries, but was $bitLength")
+    val name: String = s"${_underlying.name}-t$bitLength"
+    val byteLength: Int = bitLength / 8
+    val hexStringLength: Int = byteLength * 2
+    def underlying: Option[HashAlgorithm] = Some(_underlying)
+    def apply(file: File): Hash = {
+      val underlyingHash = _underlying(file)
+      Hash(this, underlyingHash.data.take(byteLength))
     }
   }
 }

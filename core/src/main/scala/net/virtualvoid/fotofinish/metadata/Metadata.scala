@@ -92,12 +92,8 @@ object Id {
   implicit def idFormat: JsonFormat[Id] = new JsonFormat[Id] {
     override def write(obj: Id): JsValue = JsString(obj.idString)
     override def read(json: JsValue): Id = json match {
-      case JsString(x) =>
-        x.split(":") match {
-          case Array("sha-512", data) => Hashed(Hash.fromString(HashAlgorithm.Sha512, data))
-          case x                      => MetadataJsonProtocol.error(s"Cannot read Id from split string [${x.mkString(", ")}]")
-        }
-      case x => MetadataJsonProtocol.error(s"Cannot read Id from $x")
+      case JsString(x) => Hashed(Hash.fromPrefixedString(x).getOrElse(MetadataJsonProtocol.error(s"Cannot read Id from '$x'")))
+      case x           => MetadataJsonProtocol.error(s"Cannot read Id from $x")
     }
   }
 

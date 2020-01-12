@@ -26,7 +26,12 @@ final case class RepositoryConfig(
 
   def repoFile(hash: Hash): File = {
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}"
-    new File(storageDir, fileName)
+    val file0 = new File(storageDir, fileName)
+    if (!file0.exists && hash.hashAlgorithm.underlying.isDefined)
+      fileInfoByHashPrefix(hash.asHexString, hash.hashAlgorithm.underlying.get)
+        .fold(file0)(_.repoFile)
+    else
+      file0
   }
   def metadataFile(id: Id): File = metadataFile(id.hash)
   def metadataFile(hash: Hash): File = {

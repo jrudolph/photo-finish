@@ -36,7 +36,7 @@ object Settings {
       repo,
       meta,
       linkDir,
-      HashAlgorithm.Sha512,
+      HashAlgorithm.Sha512T160,
       knownMetadataKinds,
       autoExtractors,
       8,
