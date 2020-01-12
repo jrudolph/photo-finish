@@ -87,5 +87,10 @@ lazy val basicSettings = Seq(
   ),
 
   fork in run := true,
-  javaOptions in run += "-Djna.library.path=/home/johannes/git/self/photo-finish",
+  javaOptions in run ++= Seq(
+    "-Djna.library.path=/home/johannes/git/self/photo-finish",
+    "-XX:+PreserveFramePointer",
+    "-XX:+UnlockDiagnosticVMOptions",
+    "-XX:+DebugNonSafepoints",
+  )
 )
