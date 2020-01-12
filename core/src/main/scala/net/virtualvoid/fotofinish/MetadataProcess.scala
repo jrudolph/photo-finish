@@ -381,6 +381,9 @@ object MetadataProcess {
               .via(Framing.delimiter(ByteString("\n"), 1000000))
               .map(_.utf8String)
               .mapConcat(readJournalEntry(config, _).toVector)
+              .recoverWithRetries(1, {
+                case z: ZipException => Source.empty
+              })
           else
             Source.empty
         }
