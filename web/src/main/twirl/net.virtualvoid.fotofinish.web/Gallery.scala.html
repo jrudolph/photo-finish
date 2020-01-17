@@ -10,7 +10,7 @@
         <script src="/vendor/galleria-1.6.1/dist/galleria.min.js"></script>
 
         <style>
-            .galleria{ width: 2000px; height: 1000px; background: #000 }
+            .galleria{ background: #000; width: 100%; height: 100%; }
         </style>
     </head>
     <body>
@@ -22,7 +22,7 @@
                 var data = @{Html(images.toJson.prettyPrint)}
 
                 Galleria.loadTheme('/vendor/galleria-1.6.1/dist/themes/twelve/galleria.twelve.min.js');
-                Galleria.run('.galleria', { dataSource: data });
+                Galleria.run('.galleria', { dataSource: data, imageCrop: false });
             }());
         </script>
     </body>
