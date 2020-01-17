@@ -12,7 +12,6 @@ import play.twirl.api.Html
 import util.ImageTools
 import html._
 import metadata._
-import net.virtualvoid.fotofinish.metadata.Id.Hashed
 
 import scala.concurrent.Future
 import scala.util.control.NonFatal
@@ -46,6 +45,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
       concat(
         pathPrefix("images")(images),
         pathPrefix("gallery")(gallery),
+        pathPrefix("extractors")(extractors),
         auxiliary,
       )
     }
@@ -117,6 +117,13 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
       onSuccess(imageDatasF) { imageDatas =>
         complete(Gallery(imageDatas))
+      }
+    }
+
+  lazy val extractors: Route =
+    get {
+      onSuccess(app.extractorStatus()) { status =>
+        complete(ExtractorStatus(status))
       }
     }
 

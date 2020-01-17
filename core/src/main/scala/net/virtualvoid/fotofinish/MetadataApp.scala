@@ -20,6 +20,7 @@ trait MetadataApp {
   def metadataFor(id: Id): Future[Metadata]
   def knownObjects(): Future[TreeSet[Id]]
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
+  def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
 }
 
 object MetadataApp {
@@ -60,12 +61,14 @@ object MetadataApp {
 
       val ingestor = runProcess(IngestionController)
       val metadataAccess = runProcess(PerObjectMetadataCollector)
-      config.autoExtractors.foreach(e => runProcess(new MetadataIsCurrentProcess(e)))
+      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e)))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)
       def metadataFor(id: Id): Future[Metadata] = metadataAccess.metadataFor(id)
       def knownObjects(): Future[TreeSet[Id]] = metadataAccess.knownObjects()
+      def extractorStatus(): Future[Seq[(String, Map[String, Int])]] =
+        Future.traverse(metadataStatuses) { case (extractor, a) => a.workHistogram.map(histo => extractor.kind -> histo) }
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()

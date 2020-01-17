@@ -1,0 +1,24 @@
+@(status: Seq[(String, Map[String, Int])])
+
+<table>
+    <thead>
+        <tr>
+            <td>Extractor</td>
+            <td>Waiting For Dependencies</td>
+            <td>Ready</td>
+            <td>Scheduled</td>
+            <td>Done</td>
+            <td>Precondition Not Met</td>
+        </tr>
+    </thead>
+    <tbody>
+    @for((name, stats) <- status) {
+        <tr>
+            <td>@name</td>
+            @for(state <- Vector("CollectingDependencies", "Ready", "Scheduled", "Calculated", "PreConditionNotMet")) {
+            <td>@{stats.getOrElse(state, 0)}</td>
+            }
+        </tr>
+    }
+    </tbody>
+</table>

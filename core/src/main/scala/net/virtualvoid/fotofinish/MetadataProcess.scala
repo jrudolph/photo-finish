@@ -538,6 +538,10 @@ object IngestionController extends MetadataProcess with SingleEntryState {
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
+trait MetadataExtractionScheduler {
+  def workHistogram: Future[Map[String, Int]]
+}
+
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess with SingleEntryState {
   sealed trait DependencyState {
     def exists: Boolean
@@ -552,7 +556,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     def get: MetadataEntry = value
   }
 
-  sealed trait HashState {
+  sealed trait HashState extends Product {
     def handle(entry: MetadataEntry): HashState
   }
   case class CollectingDependencies(dependencyState: Vector[DependencyState]) extends HashState {
@@ -566,13 +570,22 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
             case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
             case x => x // FIXME: handle dependency changes
           }
-        CollectingDependencies(newL)
+
+        if (newL forall (_.exists)) Ready(newL.map(_.get))
+        else CollectingDependencies(newL)
       }
 
     def hasAllDeps: Boolean = dependencyState.forall(_.exists)
   }
   private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)))
-  case class Scheduled(dependencyState: Vector[DependencyState]) extends HashState {
+  case class Ready(dependencyState: Vector[MetadataEntry]) extends HashState {
+    override def handle(entry: MetadataEntry): HashState =
+      if (entry.kind.kind == extractor.metadataKind.kind)
+        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
+        else Calculated(entry.kind.version)
+      else this
+  }
+  case class Scheduled(dependencyState: Vector[MetadataEntry]) extends HashState {
     override def handle(entry: MetadataEntry): HashState =
       if (entry.kind.kind == extractor.metadataKind.kind)
         if (entry.kind.version == extractor.metadataKind.version) LatestVersion
@@ -615,10 +628,10 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   }
 
   type S = State
-  type Api = Unit
+  type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 1
+  def version: Int = 2
 
   def initialState: S = State(Map.empty)
   def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)
@@ -626,17 +639,15 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
     val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) =
       state.objectStates
-        .collect { case (hash, c: CollectingDependencies) if c.hasAllDeps => (hash, c) }
+        .collect { case (hash, r: Ready) => (hash, r) }
         .take(10)
         .map {
-          case (hash, c @ CollectingDependencies(depStates)) if c.hasAllDeps =>
-            val depValues = depStates.map(_.get)
-
+          case (hash, r @ Ready(depValues)) =>
             extractor.precondition(hash, depValues, context) match {
               case None =>
                 // precondition met
                 (
-                  (_: State).set(hash, Scheduled(depStates)),
+                  (_: State).set(hash, Scheduled(depValues)),
                   (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): SideEffect
                 )
               case Some(cause) =>
@@ -650,7 +661,15 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     else (stateChanges.foldLeft(state)((s, f) => f(s)), sideeffects)
   }
 
-  def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): Unit = ()
+  override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
+    new MetadataExtractionScheduler {
+      def workHistogram: Future[Map[String, Int]] =
+        handleWithState.access { state =>
+          state.objectStates
+            .groupBy(_._2.productPrefix)
+            .mapValues(_.size)
+        }
+    }
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
     import JsonExtra._
@@ -673,6 +692,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
     }
 
     implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat1(CollectingDependencies.apply)
+    implicit def readyFormat: JsonFormat[Ready] = jsonFormat1(Ready.apply)
     implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
     implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
     implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat1(PreConditionNotMet.apply)
@@ -681,6 +701,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
       override def read(json: JsValue): HashState =
         json.field("type") match {
           case JsString("CollectingDependencies") => json.convertTo[CollectingDependencies]
+          case JsString("Ready")                  => json.convertTo[Ready]
           case JsString("Scheduled")              => json.convertTo[Scheduled]
           case JsString("Calculated")             => json.convertTo[Calculated]
           case JsString("PreConditionNotMet")     => json.convertTo[PreConditionNotMet]
@@ -689,6 +710,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
 
       override def write(obj: HashState): JsValue = obj match {
         case c: CollectingDependencies => c.toJson + ("type" -> JsString("CollectingDependencies"))
+        case r: Ready                  => r.toJson + ("type" -> JsString("Ready"))
         case s: Scheduled              => s.toJson + ("type" -> JsString("Scheduled"))
         case c: Calculated             => c.toJson + ("type" -> JsString("Calculated"))
         case p: PreConditionNotMet     => p.toJson + ("type" -> JsString("PreConditionNotMet"))
@@ -699,7 +721,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
 
   override def initializeStateSnapshot(state: State): State =
     state.mutateStates(_.mapValues {
-      case Scheduled(depStates) => CollectingDependencies(depStates) // throw away markers that a calculation is already in process
+      case Scheduled(depValues) => Ready(depValues) // throw away markers that a calculation is already in process
       case x                    => x
     })
 }
@@ -751,13 +773,14 @@ object PerObjectMetadataCollector extends MetadataProcess {
   override def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, ParsedOrNot)] = {
     import spray.json._
     import spray.json.DefaultJsonProtocol._
-    implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
-      JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))
+    /*implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
+      JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))*/
 
     implicit def metadataFormat: JsonFormat[Metadata] = jsonFormat1(Metadata.apply _)
     implicit def parsedOrNotFormat: JsonFormat[ParsedOrNot] = new JsonFormat[ParsedOrNot] {
       override def read(json: JsValue): ParsedOrNot = json match {
         case JsString(str) => NotParsed(str, () => str.parseJson.convertTo[Metadata])
+        case _             => throw new IllegalStateException
       }
       override def write(obj: ParsedOrNot): JsValue = obj match {
         case NotParsed(str, f) => JsString(str)
