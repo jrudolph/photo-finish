@@ -4,6 +4,7 @@
     <thead>
         <tr>
             <td>Extractor</td>
+            <td>Total</td>
             <td>Waiting For Dependencies</td>
             <td>Ready</td>
             <td>Scheduled</td>
@@ -15,6 +16,7 @@
     @for((name, stats) <- status) {
         <tr>
             <td>@name</td>
+            <td>@{stats.values.sum}</td>
             @for(state <- Vector("CollectingDependencies", "Ready", "Scheduled", "Calculated", "PreConditionNotMet")) {
             <td>@{stats.getOrElse(state, 0)}</td>
             }
