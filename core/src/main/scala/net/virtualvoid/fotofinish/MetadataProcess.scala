@@ -149,13 +149,19 @@ object MetadataProcess {
       def setFinishedReplaying: ProcessState = copy(hasFinishedReplaying = true)
       def setFinished: ProcessState = copy(finished = true)
 
-      def saveSnapshot(force: Boolean = false): ProcessState = if ((lastSnapshotAt + config.snapshotOffset < seqNr) || (force && lastSnapshotAt < seqNr)) {
-        val started = System.nanoTime()
-        serializeState(p, config)(Snapshot(p.id, p.version, seqNr, processState))
-        val lasted = System.nanoTime() - started
-        println(s"[${p.id}] Serializing state in ${lasted / 1000000} ms")
-        this.withLastSnapshotNow
-      } else this
+      def saveSnapshot(force: Boolean = false): ProcessState =
+        if ((lastSnapshotAt + config.snapshotOffset < seqNr) || (force && lastSnapshotAt < seqNr)) bench("Serializing state") {
+          serializeState(p, config)(Snapshot(p.id, p.version, seqNr, processState))
+          this.withLastSnapshotNow
+        }
+        else this
+    }
+    def bench[T](what: String)(f: => T): T = {
+      val started = System.nanoTime()
+      val res = f
+      val lasted = System.nanoTime() - started
+      println(s"[${p.id}] $what in ${lasted / 1000000} ms")
+      res
     }
     def replaying(waitingExecutions: Vector[Execute[p.S, _]]): Handler = state => {
       case Metadata(e) =>
@@ -219,7 +225,7 @@ object MetadataProcess {
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 
-    val snapshot = deserializeState(p, config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+    val snapshot = bench("Deserializing state")(deserializeState(p, config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState)))
     println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
 
     val processFlow =
