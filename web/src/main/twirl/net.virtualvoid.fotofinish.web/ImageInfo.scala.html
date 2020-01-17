@@ -44,7 +44,7 @@
     <tr>
         <th><img src="face/@i" height="50px"/></th>
   @for(face2 <- metadata.get(MetadataShortcuts.Faces)) {
-        <td>@{Math.sqrt(net.virtualvoid.fotofinish.ClusterTest.sqdistFloat(face.modelData, face2.modelData)) * 100 toInt}</td>
+        <td>@{Math.sqrt(net.virtualvoid.fotofinish.ClusterTest.sqdistFloatWithoutThreshold(face.modelData, face2.modelData)) * 100 toInt}</td>
   }
     </tr>
 }

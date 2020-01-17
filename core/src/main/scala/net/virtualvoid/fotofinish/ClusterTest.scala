@@ -82,6 +82,17 @@ object ClusterTest extends App {
     }
     sqDiff
   }
+  def sqdistFloatWithoutThreshold(a1: FeatureVector, a2: FeatureVector): Float = {
+    var i = 0
+    var sqDiff = 0f
+    while (i < a1.length) {
+      val diff = a1(i) - a2(i)
+      sqDiff += diff * diff
+
+      i += 1
+    }
+    sqDiff
+  }
 
   def centroidFloat(points: immutable.Seq[FeatureVector]): FeatureVector =
     points.transpose.map(cn => cn.sum / cn.size.toFloat).toArray
