@@ -1,4 +1,5 @@
 package net.virtualvoid.fotofinish
+package process
 
 import java.io.{ File, FileOutputStream }
 import java.nio.file.{ Files, StandardCopyOption }
@@ -11,7 +12,7 @@ import akka.stream._
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
-import net.virtualvoid.fotofinish.MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
+import MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.util.JsonExtra

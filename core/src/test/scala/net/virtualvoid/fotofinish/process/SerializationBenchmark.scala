@@ -1,4 +1,5 @@
 package net.virtualvoid.fotofinish
+package process
 
 import akka.actor.ActorSystem
 

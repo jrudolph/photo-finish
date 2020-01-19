@@ -2,7 +2,8 @@ package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.MetadataProcess.{ Journal, SideEffect }
+import net.virtualvoid.fotofinish.process.{ IngestionController, MetadataIsCurrentProcess, MetadataProcess, PerObjectMetadataCollector }
+import net.virtualvoid.fotofinish.process.MetadataProcess.{ Journal, SideEffect }
 import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
 
 import scala.collection.immutable.TreeSet
