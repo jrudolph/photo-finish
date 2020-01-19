@@ -259,7 +259,7 @@ object MetadataProcess {
   }
 
   // FIXME: join with header
-  private case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
+  case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
   import spray.json.DefaultJsonProtocol._
   import spray.json._
   private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
@@ -283,7 +283,7 @@ object MetadataProcess {
     } finally os.close()
     Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
   }
-  private def deserializeState(p: MetadataProcess, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[p.S]] = {
+  def deserializeState(p: MetadataProcess, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[p.S]] = {
     import system.dispatcher
 
     val file = processSnapshotFile(p, config)
