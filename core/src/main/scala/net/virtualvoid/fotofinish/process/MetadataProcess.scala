@@ -12,7 +12,6 @@ import akka.stream.scaladsl.{ Compression, FileIO, Flow, Framing, Keep, MergeHub
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
-import net.virtualvoid.fotofinish.process.MetadataProcess.SideEffect
 import net.virtualvoid.fotofinish.util.{ JsonExtra, StatefulDetachedFlow }
 import spray.json.JsonFormat
 
@@ -23,13 +22,13 @@ import scala.util.control.NonFatal
 import scala.util.{ Failure, Success, Try }
 
 trait HandleWithStateFunc[S] {
-  def apply[T](f: S => (S, Vector[SideEffect], T)): Future[T]
+  def apply[T](f: S => (S, Vector[WorkEntry], T)): Future[T]
   def access[T](f: S => T): Future[T] =
     apply { state =>
       (state, Vector.empty, f(state))
     }
 
-  def handleStream: Sink[S => (S, Vector[SideEffect]), Any]
+  def handleStream: Sink[S => (S, Vector[WorkEntry]), Any]
 }
 
 trait MetadataProcess {
@@ -41,7 +40,7 @@ trait MetadataProcess {
 
   def initialState: S
   def processEvent(state: S, event: MetadataEnvelope): S
-  def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect])
+  def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
   /** Allows to prepare state loaded from snapshot */
@@ -62,25 +61,21 @@ trait SingleEntryState extends MetadataProcess {
 }
 
 object MetadataProcess {
-  // TODO: make those work items a proper trait that includes metadata about a work item
-  // like expected workload in terms of CPU, IO, etc.
-  type SideEffect = () => Future[Vector[MetadataEntry]]
-
   sealed trait StreamEntry
   final case class Metadata(entry: MetadataEnvelope) extends StreamEntry
   case object AllObjectsReplayed extends StreamEntry
   case object MakeSnapshot extends StreamEntry
   case object ShuttingDown extends StreamEntry
-  final case class Execute[S, T](f: S => (S, Vector[SideEffect], T), promise: Promise[T]) extends StreamEntry
+  final case class Execute[S, T](f: S => (S, Vector[WorkEntry], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: MetadataJournal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[SideEffect, p.Api] = {
+  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: MetadataJournal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
         .mapMaterializedValue {
           case (queue, sink) =>
             p.api(new HandleWithStateFunc[p.S] {
-              def apply[T](f: p.S => (p.S, Vector[SideEffect], T)): Future[T] = {
+              def apply[T](f: p.S => (p.S, Vector[WorkEntry], T)): Future[T] = {
                 val promise = Promise[T]
                 queue.offer(Execute(f, promise))
                   .onComplete {
@@ -90,8 +85,8 @@ object MetadataProcess {
                 promise.future
               }
 
-              def handleStream: Sink[p.S => (p.S, Vector[SideEffect]), Any] =
-                Flow[p.S => (p.S, Vector[SideEffect])]
+              def handleStream: Sink[p.S => (p.S, Vector[WorkEntry]), Any] =
+                Flow[p.S => (p.S, Vector[WorkEntry])]
                   .map { f =>
                     Execute[p.S, Unit]({ state =>
                       val (newState, ses) = f(state)
@@ -110,18 +105,18 @@ object MetadataProcess {
     }
 
     type Handler = ProcessState => StreamEntry => ProcessState
-    case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, sideEffects: Vector[SideEffect], lastSnapshotAt: Long, hasFinishedReplaying: Boolean, finished: Boolean) {
+    case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, workEntries: Vector[WorkEntry], lastSnapshotAt: Long, hasFinishedReplaying: Boolean, finished: Boolean) {
       def run(streamEntry: StreamEntry): ProcessState = handler(this)(streamEntry)
 
       def runEntry(envelope: MetadataEnvelope): ProcessState = copy(processState = p.processEvent(processState, envelope))
 
       def execute[T](e: Execute[p.S, T]): ProcessState =
         Try(e.f(processState)) match {
-          case Success((newState, sideEffects, res)) =>
+          case Success((newState, workEntries, res)) =>
             e.promise.trySuccess(res)
             this
               .withState(newState)
-              .addSideEffects(sideEffects)
+              .addWorkEntries(workEntries)
           case Failure(ex) =>
             e.promise.tryFailure(ex)
             this
@@ -132,15 +127,15 @@ object MetadataProcess {
       def withState(newState: p.S): ProcessState = copy(processState = newState)
       def withLastSnapshotAt(newValue: Long): ProcessState = copy(lastSnapshotAt = newValue)
       def withLastSnapshotNow: ProcessState = copy(lastSnapshotAt = seqNr)
-      def addSideEffects(newSideEffects: Vector[SideEffect]): ProcessState = copy(sideEffects = sideEffects ++ newSideEffects)
-      def clearSideEffects: ProcessState = copy(sideEffects = Vector.empty)
+      def addWorkEntries(newWorkEntries: Vector[WorkEntry]): ProcessState = copy(workEntries = workEntries ++ newWorkEntries)
+      def clearWorkEntries: ProcessState = copy(workEntries = Vector.empty)
 
-      def emit: (ProcessState, Vector[SideEffect]) =
+      def emit: (ProcessState, Vector[WorkEntry]) =
         if (hasFinishedReplaying)
-          if (sideEffects.nonEmpty) (clearSideEffects, sideEffects)
+          if (workEntries.nonEmpty) (clearWorkEntries, workEntries)
           else {
-            val (newState, sideEffects) = p.sideEffects(processState, extractionContext)
-            (withState(newState), sideEffects)
+            val (newState, workEntries) = p.createWork(processState, extractionContext)
+            (withState(newState), workEntries)
           }
         else
           (this, Vector.empty)
@@ -231,7 +226,7 @@ object MetadataProcess {
       Flow[StreamEntry]
         .merge(Source.tick(config.snapshotInterval, config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
-        .via(statefulDetachedFlow[StreamEntry, SideEffect, ProcessState](
+        .via(statefulDetachedFlow[StreamEntry, WorkEntry, ProcessState](
           () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, lastSnapshotAt = snapshot.currentSeqNr, hasFinishedReplaying = false, finished = false),
           _.run(_),
           _.emit,
@@ -340,7 +335,7 @@ object GetAllObjectsProcess extends MetadataProcess with SingleEntryState {
   def initialState: State = State(Set.empty)
   def processEvent(state: State, event: MetadataEnvelope): State =
     state.copy(knownHashes = state.knownHashes + event.entry.target.hash)
-  def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
     () => handleWithState { state =>
@@ -370,7 +365,7 @@ object IngestionController extends MetadataProcess with SingleEntryState {
     case entry if entry.kind == IngestionData => state.add(entry.target.hash, entry.value.asInstanceOf[IngestionData])
     case _                                    => state
   }
-  def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
 
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
@@ -386,7 +381,7 @@ object IngestionController extends MetadataProcess with SingleEntryState {
         (newState, ses, ())
       }
 
-    private def handleNewEntry(hash: Hash, newData: IngestionData): S => (S, Vector[SideEffect]) = state => {
+    private def handleNewEntry(hash: Hash, newData: IngestionData): S => (S, Vector[WorkEntry]) = state => {
       def matches(data: IngestionData): Boolean =
         newData.originalFullFilePath == data.originalFullFilePath
 
@@ -513,8 +508,8 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   def initialState: S = State(Map.empty)
   def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)
 
-  def sideEffects(state: S, context: ExtractionContext): (S, Vector[SideEffect]) = {
-    val (stateChanges: Vector[State => State], sideeffects: Vector[SideEffect]) =
+  def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
+    val (stateChanges: Vector[State => State], workEntries: Vector[WorkEntry] @unchecked) =
       state.objectStates
         .collect { case (hash, r: Ready) => (hash, r) }
         .take(10)
@@ -525,7 +520,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
                 // precondition met
                 (
                   (_: State).set(hash, Scheduled(depValues)),
-                  (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): SideEffect
+                  (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): WorkEntry
                 )
               case Some(cause) =>
                 (
@@ -535,7 +530,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
             }
         }.toVector.unzip
     if (stateChanges.isEmpty) (state, Vector.empty)
-    else (stateChanges.foldLeft(state)((s, f) => f(s)), sideeffects)
+    else (stateChanges.foldLeft(state)((s, f) => f(s)), workEntries)
   }
 
   override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
@@ -634,7 +629,7 @@ object PerObjectMetadataCollector extends MetadataProcess {
 
   override def initialState: State = State(TreeMap.empty)
   override def processEvent(state: State, event: MetadataEnvelope): State = state.handle(event.entry)
-  override def sideEffects(state: State, context: ExtractionContext): (State, Vector[SideEffect]) = (state, Vector.empty)
+  override def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
   override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataApi =
     new MetadataApi {
       def metadataFor(id: Id): Future[Metadata] =
