@@ -12,10 +12,10 @@ import akka.stream._
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
-import MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
-import net.virtualvoid.fotofinish.util.JsonExtra
+import net.virtualvoid.fotofinish.process.MetadataProcess.{ AllObjectsReplayed, SideEffect, StreamEntry }
+import net.virtualvoid.fotofinish.util.{ JsonExtra, RepeatSource, StatefulDetachedFlow }
 import spray.json.JsonFormat
 
 import scala.collection.immutable.{ TreeMap, TreeSet }
@@ -772,8 +772,8 @@ object PerObjectMetadataCollector extends MetadataProcess {
   override def stateAsEntries(state: State): Iterator[(Hash, ParsedOrNot)] = state.metadata.iterator
   override def entriesAsState(entries: Iterable[(Hash, ParsedOrNot)]): State = State(TreeMap(entries.toSeq: _*))
   override def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, ParsedOrNot)] = {
-    import spray.json._
     import spray.json.DefaultJsonProtocol._
+    import spray.json._
     /*implicit def treeMapFormat[K: Ordering: JsonFormat, V: JsonFormat]: JsonFormat[TreeMap[K, V]] =
       JsonExtra.deriveFormatFrom[Map[K, V]](_.toMap, m => TreeMap(m.toSeq: _*))*/
 
@@ -790,47 +790,6 @@ object PerObjectMetadataCollector extends MetadataProcess {
     }
 
     implicitly[JsonFormat[(Hash, ParsedOrNot)]]
-  }
-}
-
-/**
- * A source that infinitely repeats the given source (by rematerializing it when the previous
- * instance was exhausted.
- *
- * Note that the elements can differ between rematerializations depending on the given source.
- */
-class RepeatSource[T](source: Source[T, Any]) extends GraphStage[SourceShape[T]] {
-  val out = Outlet[T]("RepeatSource.out")
-  val shape: SourceShape[T] = SourceShape(out)
-
-  def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
-    val waitingForInitialPull = new OutHandler {
-      override def onPull(): Unit = {
-        val in = new SubSinkInlet[T]("RepeatSource.in")
-        val handler = supplying(in)
-        in.setHandler(handler)
-        setHandler(out, handler)
-        in.pull()
-        source.runWith(in.sink)(subFusingMaterializer)
-      }
-    }
-    setHandler(out, waitingForInitialPull)
-
-    def supplying(in: SubSinkInlet[T]): OutHandler with InHandler = new OutHandler with InHandler {
-      override def onPull(): Unit = if (!in.hasBeenPulled) in.pull()
-      override def onDownstreamFinish(cause: Throwable): Unit = {
-        in.cancel(cause)
-        super.onDownstreamFinish(cause)
-      }
-
-      override def onPush(): Unit = push(out, in.grab())
-      override def onUpstreamFinish(): Unit = {
-        setHandler(out, waitingForInitialPull)
-        if (isAvailable(out)) waitingForInitialPull.onPull()
-      }
-      // just propagate failure
-      // override def onUpstreamFailure(ex: Throwable): Unit = super.onUpstreamFailure(ex)
-    }
   }
 }
 
@@ -882,33 +841,5 @@ class TakeFromWheel(firstSeqNr: Long) extends GraphStage[FlowShape[StreamEntry, 
 
     setHandler(out, this)
     setHandler(in, waitForStart)
-  }
-}
-
-class StatefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emitF: S => (S, Vector[U]), isFinished: S => Boolean) extends GraphStage[FlowShape[T, U]] {
-  val in = Inlet[T]("StateFullDetachedFlow.in")
-  val out = Outlet[U]("StateFullDetachedFlow.out")
-  val shape: FlowShape[T, U] = FlowShape(in, out)
-  def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with InHandler with OutHandler {
-    setHandlers(in, out, this)
-
-    override def preStart(): Unit = pull(in)
-
-    private[this] var state = initialState()
-
-    override def onPush(): Unit = {
-      state = handle(state, grab(in))
-      if (isFinished(state)) completeStage()
-      else {
-        pull(in)
-        if (isAvailable(out)) onPull()
-      }
-    }
-    override def onPull(): Unit = {
-      val (newState, toEmit) = emitF(state)
-      state = newState
-      if (toEmit.nonEmpty) emitMultiple(out, toEmit)
-      if (isFinished(state)) completeStage()
-    }
   }
 }
