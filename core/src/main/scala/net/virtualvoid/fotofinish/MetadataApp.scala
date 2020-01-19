@@ -3,7 +3,8 @@ package net.virtualvoid.fotofinish
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.process.{ IngestionController, MetadataIsCurrentProcess, MetadataProcess, PerObjectMetadataCollector }
-import net.virtualvoid.fotofinish.process.MetadataProcess.{ Journal, SideEffect }
+import net.virtualvoid.fotofinish.process.MetadataProcess.SideEffect
+import net.virtualvoid.fotofinish.process.MetadataJournal
 import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
 
 import scala.collection.immutable.TreeSet
@@ -15,7 +16,7 @@ trait MetadataApp {
   implicit def executionContext: ExecutionContext
   def config: RepositoryConfig
 
-  def journal: Journal
+  def journal: MetadataJournal
   def ingestionDataSink: Sink[(Hash, IngestionData), Any]
   def ingest(hash: Hash, data: IngestionData): Unit
   def metadataFor(id: Id): Future[Metadata]
@@ -33,7 +34,7 @@ object MetadataApp {
 
       def config: RepositoryConfig = _config
 
-      val journal = MetadataProcess.journal(_config)
+      val journal = MetadataJournal(_config)
       system.registerOnTermination(journal.shutdown())
 
       val executor: Sink[SideEffect, Any] =
