@@ -122,6 +122,7 @@ object Hash {
   implicit val hashFormat = new JsonFormat[Hash] {
     override def read(json: JsValue): Hash = json match {
       case JsString(data) => Hash.fromPrefixedString(data).getOrElse(throw DeserializationException(s"Prefixed hash string could not be read [$data]"))
+      case x              => throw DeserializationException(s"Hash cannot be read from [$x]")
     }
     override def write(obj: Hash): JsValue = JsString(obj.toString)
   }

@@ -4,7 +4,7 @@ import java.io.File
 
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model.DateTime
-import akka.stream.scaladsl.{ Compression, FileIO, Framing, Keep, Sink }
+import akka.stream.scaladsl.{ Compression, FileIO, Framing }
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
@@ -45,6 +45,7 @@ object MetadataConverter extends App {
     val value: kind.T = entry.data.convertTo(kind.jsonFormat)
     val newHash = entry.forData match {
       case Hash(HashAlgorithm.Sha512, data) => Hash(HashAlgorithm.Sha512T160, data.take(HashAlgorithm.Sha512T160.byteLength))
+      case x                                => throw new IllegalStateException(x.toString)
     }
 
     MetadataEntry[kind.T](
