@@ -539,7 +539,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
         handleWithState.access { state =>
           state.objectStates
             .groupBy(_._2.productPrefix)
-            .mapValues(_.size)
+            .view.mapValues(_.size).toMap
         }
     }
 
@@ -592,10 +592,10 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
   }
 
   override def initializeStateSnapshot(state: State): State =
-    state.mutateStates(_.mapValues {
+    state.mutateStates(_.view.mapValues {
       case Scheduled(depValues) => Ready(depValues) // throw away markers that a calculation is already in process
       case x                    => x
-    })
+    }.toMap)
 }
 
 trait MetadataApi {

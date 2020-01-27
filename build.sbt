@@ -1,4 +1,4 @@
-val scalaV = "2.12.10"
+val scalaV = "2.13.1"
 val akkaV = "2.6.1"
 val akkaHttpV = "10.1.11"
 
@@ -14,8 +14,8 @@ lazy val core: Project = project
   .settings(
     libraryDependencies ++= Seq(
       "io.spray" %% "spray-json" % "1.3.5",
-      "com.drewnoakes" % "metadata-extractor" % "2.11.0",
-      "net.java.dev.jna" % "jna" % "4.5.2",
+      "com.drewnoakes" % "metadata-extractor" % "2.13.0",
+      "net.java.dev.jna" % "jna" % "5.5.0",
 
       "com.typesafe.akka" %% "akka-actor" % akkaV,
       "com.typesafe.akka" %% "akka-stream" % akkaV,
@@ -79,6 +79,7 @@ lazy val basicSettings = Seq(
     "-deprecation",
     "-unchecked",
     "-feature",
+    "-language:postfixOps",
     "-Xlint"
   ),
 

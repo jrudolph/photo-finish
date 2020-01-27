@@ -18,6 +18,9 @@ TODO:
  */
 
 object ClusterTest extends App {
+  implicit val floadOrdering = Ordering.Float.TotalOrdering
+  implicit val doubleOrdering = Ordering.Double.TotalOrdering
+
   val Threshold = 0.2 // 0.6*0.6 ?
   val NumFaces = 25000
   val ShortHash = 20
@@ -118,7 +121,6 @@ object ClusterTest extends App {
 
   val edges =
     candidates
-      .par
       .flatMap { c1 =>
         candidates
           .filter { c2 =>
@@ -127,7 +129,6 @@ object ClusterTest extends App {
           }
           .map(c2 => vertexData(c1) -> vertexData(c2))
       }
-      .seq
 
   val vertices: Set[VertexData] = edges.flatMap(e => e._1 :: e._2 :: Nil).toSet
   println(s"Found ${edges.size} edges between ${vertices.size} vertices")

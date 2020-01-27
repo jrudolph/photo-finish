@@ -63,7 +63,7 @@ object Relinker {
       .zipWithIndex
       .grouped(1000)
       .foreach { group =>
-        group.toVector.par
+        group.toVector
           .map {
             case (fileInfo, i) => FileAndMetadata(fileInfo, metadataFor(fileInfo.hash)) -> i
           }

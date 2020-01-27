@@ -95,7 +95,7 @@ object MetadataJournal {
     val existingEntryWheel: Source[StreamEntry, Any] =
       Source
         .fromGraph(new RepeatSource(
-          Source.lazyFutureSource(readAllEntries)
+          Source.lazyFutureSource(readAllEntries _)
             .map[StreamEntry](Metadata)
             .concat(Source.single(AllObjectsReplayed))
         ))

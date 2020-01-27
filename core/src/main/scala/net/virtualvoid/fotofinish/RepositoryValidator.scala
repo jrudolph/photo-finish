@@ -34,7 +34,8 @@ object RepositoryValidator extends App {
 
   def runCheck(what: String, check: FileInfo => Try[Unit]): Unit = {
     println(s"Starting check [$what]")
-    sorted.toIterator
+    sorted
+      .iterator
       .map(check)
       .map {
         val i = new AtomicInteger()

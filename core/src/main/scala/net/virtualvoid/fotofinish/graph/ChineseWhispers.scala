@@ -8,7 +8,7 @@ import scala.collection.immutable
 object ChineseWhispers {
   def cluster[V](graph: Graph[V], iterations: Int = 50): immutable.Seq[Set[V]] = {
     type Labels = Map[V, Int]
-    val initialLabels = graph.vertices.toIterator.zip(Iterator.from(1)).toMap
+    val initialLabels = graph.vertices.iterator.zip(Iterator.from(1)).toMap
     val vertices = graph.vertices.toVector
     val outgoingVertices: Map[V, immutable.Set[V]] =
       graph.edges.flatMap {

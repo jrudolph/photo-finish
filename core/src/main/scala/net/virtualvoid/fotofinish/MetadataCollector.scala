@@ -21,7 +21,6 @@ object MetadataCollector extends App {
     println("Collecting metadata")
     val entries =
       sorted
-        .par
         .flatMap { fi =>
           val idx = read.incrementAndGet()
           if (idx % 1000 == 0) println(s"$idx/${sorted.size}")
@@ -29,7 +28,6 @@ object MetadataCollector extends App {
           // MetadataManager.loadAllEntriesFrom(config.metadataFile(fi.hash)).entries
           Vector.empty[MetadataEntry]
         }
-        .seq
 
     println(s"Found ${entries.size} entries")
     println(s"Sorting by creation time and hash")

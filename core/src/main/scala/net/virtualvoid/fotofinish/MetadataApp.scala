@@ -74,7 +74,7 @@ object MetadataApp {
         knownObjects()
           .map { ids =>
             ids
-              .from(prefix)
+              .rangeFrom(prefix)
               .headOption
               .filter(_.idString startsWith prefix.idString)
           }

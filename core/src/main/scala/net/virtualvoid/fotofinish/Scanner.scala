@@ -93,8 +93,8 @@ object Scanner {
     def iterate(dir: File): Iterator[File] = {
       val subDirs = Option(dir.listFiles(isDirectory && isNoDotDir)).getOrElse(Array.empty)
 
-      Option(dir.listFiles(fileFilter)).getOrElse(Array.empty).toIterator ++
-        subDirs.toIterator.flatMap(dir => iterate(dir))
+      Option(dir.listFiles(fileFilter)).getOrElse(Array.empty).iterator ++
+        subDirs.iterator.flatMap(dir => iterate(dir))
     }
 
     new Iterable[File] {
