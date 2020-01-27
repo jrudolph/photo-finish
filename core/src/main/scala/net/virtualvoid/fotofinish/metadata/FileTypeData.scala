@@ -35,7 +35,7 @@ object ImageDataExtractor {
   def DefaultImageMimeTypeFilter: String => Boolean = _.startsWith("image/")
 
   def apply(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Hash, File, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
-    MetadataExtractor.cond1(_kind, _version, metadata, FileTypeData)(fileTypeData => if (mimeTypeFilter(fileTypeData.mimeType)) None else Some("Object is not an image")) { (hash, ctx) =>
+    MetadataExtractor.cond1(_kind, _version, metadata, FileTypeData)(fileTypeData => if (mimeTypeFilter(fileTypeData.mimeType)) None else Some(s"Object is not an image but [${fileTypeData.mimeType}]")) { (hash, ctx) =>
       ctx.accessData(hash) { file => f(hash, file, ctx) }
     }
   def sync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Hash, File, ExtractionContext) => metadata.T): MetadataExtractor =
