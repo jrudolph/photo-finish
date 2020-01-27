@@ -346,70 +346,6 @@ object GetAllObjectsProcess extends MetadataProcess with SingleEntryState {
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
-trait Ingestion {
-  def ingestionDataSink: Sink[(Hash, IngestionData), Any]
-  def ingest(hash: Hash, data: IngestionData): Unit
-}
-object IngestionController extends MetadataProcess with SingleEntryState {
-  case class State(datas: Map[Hash, Vector[IngestionData]]) {
-    def add(hash: Hash, data: IngestionData): State =
-      copy(datas = datas + (hash -> (datas.getOrElse(hash, Vector.empty) :+ data)))
-  }
-  type S = State
-  type Api = Ingestion
-
-  def version: Int = 1
-  def initialState: State = State(Map.empty)
-
-  def processEvent(state: State, event: MetadataEnvelope): State = event.entry match {
-    case entry if entry.kind == IngestionData => state.add(entry.target.hash, entry.value.asInstanceOf[IngestionData])
-    case _                                    => state
-  }
-  def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
-
-  def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
-    def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
-      Flow[(Hash, IngestionData)]
-        .map {
-          case (hash, data) => handleNewEntry(hash, data)
-        }
-        .to(handleWithState.handleStream)
-
-    def ingest(hash: Hash, newData: IngestionData): Unit =
-      handleWithState { state =>
-        val (newState, ses) = handleNewEntry(hash, newData)(state)
-        (newState, ses, ())
-      }
-
-    private def handleNewEntry(hash: Hash, newData: IngestionData): S => (S, Vector[WorkEntry]) = state => {
-      def matches(data: IngestionData): Boolean =
-        newData.originalFullFilePath == data.originalFullFilePath
-
-      val newEntries =
-        if (!state.datas.get(hash).exists(_.exists(matches))) {
-          println(s"Injecting [$newData]")
-          //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
-          Vector(MetadataEntry(
-            Id.Hashed(hash),
-            Vector.empty,
-            IngestionData,
-            CreationInfo(DateTime.now, false, Ingestion),
-            newData
-          ))
-        } else {
-          //println(s"Did not ingest $fi because there already was an entry")
-          Vector.empty
-        }
-
-      (state, Vector(() => Future.successful(newEntries)))
-    }
-  }
-  import spray.json._
-  import DefaultJsonProtocol._
-  implicit val ingestionDataFormat = IngestionData.jsonFormat
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
-}
-
 trait PerHashHandleWithStateFunc[S] {
   def apply[T](key: Hash)(f: S => (S, Vector[WorkEntry], T)): Future[T]
   def access[T](key: Hash)(f: S => T): Future[T] =
@@ -510,6 +446,12 @@ trait SimplePerHashProcess { php =>
       }
     }
 }
+
+trait Ingestion {
+  def ingestionDataSink: Sink[(Hash, IngestionData), Any]
+  def ingest(hash: Hash, data: IngestionData): Unit
+}
+
 object PerHashIngestionController extends SimplePerHashProcess {
   type PerHashState = Vector[IngestionData]
   type Api = Ingestion
@@ -642,28 +584,10 @@ class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends Simp
     }
   }
 
-  case class State(objectStates: Map[Hash, HashState]) {
-    def get(hash: Hash): Option[HashState] = objectStates.get(hash)
-    def set(hash: Hash, newState: HashState): State = mutateStates(_.updated(hash, newState))
-
-    def mutateStates(f: Map[Hash, HashState] => Map[Hash, HashState]): State =
-      copy(objectStates = f(objectStates))
-
-    def handle(entry: MetadataEntry): State = {
-      val newVal =
-        objectStates.get(entry.target.hash) match {
-          case Some(s) => s.handle(entry)
-          case None    => Initial.handle(entry)
-        }
-      set(entry.target.hash, newVal)
-    }
-  }
-
-  //type S = State
   type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 2
+  def version: Int = 3
 
   def initialPerHashState(hash: Hash): HashState = Initial
   def processEvent(hash: Hash, state: HashState, event: MetadataEnvelope): HashState = state.handle(event.entry)
@@ -685,44 +609,6 @@ class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends Simp
             .view.mapValues(_.size).toMap
         }
     }
-
-  /*def initialState: S = State(Map.empty)
-  def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)*/
-
-  /*def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
-    val (stateChanges: Vector[State => State], workEntries: Vector[WorkEntry] @unchecked) =
-      state.objectStates
-        .collect { case (hash, r: Ready) => (hash, r) }
-        .take(10)
-        .map {
-          case (hash, r @ Ready(depValues)) =>
-            extractor.precondition(hash, depValues, context) match {
-              case None =>
-                // precondition met
-                (
-                  (_: State).set(hash, Scheduled(depValues)),
-                  WorkEntry.opaque(() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext))
-                )
-              case Some(cause) =>
-                (
-                  (_: State).set(hash, PreConditionNotMet(cause)),
-                  (() => Future.successful(Vector.empty)) // FIXME: is there a better way that doesn't involve scheduling a useless process?
-                )
-            }
-        }.toVector.unzip
-    if (stateChanges.isEmpty) (state, Vector.empty)
-    else (stateChanges.foldLeft(state)((s, f) => f(s)), workEntries)
-  }*/
-
-  /*override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
-    new MetadataExtractionScheduler {
-      def workHistogram: Future[Map[String, Int]] =
-        handleWithState.access { state =>
-          state.objectStates
-            .groupBy(_._2.productPrefix)
-            .view.mapValues(_.size).toMap
-        }
-    }*/
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[HashState] = {
     import JsonExtra._
@@ -777,196 +663,6 @@ class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends Simp
       case Scheduled(depValues) => Ready(depValues)
       case x                    => x
     }
-
-  /*override def initializeStateSnapshot(state: State): State =
-    state.mutateStates(_.view.mapValues {
-      case Scheduled(depValues) => Ready(depValues) // throw away markers that a calculation is already in process
-      case x                    => x
-    }.toMap)*/
-}
-
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataProcess with SingleEntryState {
-  sealed trait DependencyState {
-    def exists: Boolean
-    def get: MetadataEntry
-  }
-  case class Missing(kind: String, version: Int) extends DependencyState {
-    def exists: Boolean = false
-    def get: MetadataEntry = throw new IllegalStateException(s"Metadata for kind $kind was still missing")
-  }
-  case class Existing(value: MetadataEntry) extends DependencyState {
-    def exists: Boolean = true
-    def get: MetadataEntry = value
-  }
-
-  sealed trait HashState extends Product {
-    def handle(entry: MetadataEntry): HashState
-  }
-  case class CollectingDependencies(dependencyState: Vector[DependencyState]) extends HashState {
-    def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else {
-        val newL =
-          dependencyState.map {
-            case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
-            case x => x // FIXME: handle dependency changes
-          }
-
-        if (newL forall (_.exists)) Ready(newL.map(_.get))
-        else CollectingDependencies(newL)
-      }
-
-    def hasAllDeps: Boolean = dependencyState.forall(_.exists)
-  }
-  private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)))
-  case class Ready(dependencyState: Vector[MetadataEntry]) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else this
-  }
-  case class Scheduled(dependencyState: Vector[MetadataEntry]) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else this
-  }
-  case class Calculated(version: Int) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(version max entry.kind.version)
-      else this
-    // FIXME: handle dependency changes
-  }
-  private val LatestVersion = Calculated(extractor.metadataKind.version)
-  case class PreConditionNotMet(cause: String) extends HashState {
-    override def handle(entry: MetadataEntry): HashState = {
-      require(
-        !(entry.kind.kind == extractor.metadataKind.kind && entry.kind.version == extractor.metadataKind.version),
-        s"Unexpected metadata entry found where previously precondition was not met because of [$cause]")
-      this
-    }
-  }
-
-  case class State(objectStates: Map[Hash, HashState]) {
-    def get(hash: Hash): Option[HashState] = objectStates.get(hash)
-    def set(hash: Hash, newState: HashState): State = mutateStates(_.updated(hash, newState))
-
-    def mutateStates(f: Map[Hash, HashState] => Map[Hash, HashState]): State =
-      copy(objectStates = f(objectStates))
-
-    def handle(entry: MetadataEntry): State = {
-      val newVal =
-        objectStates.get(entry.target.hash) match {
-          case Some(s) => s.handle(entry)
-          case None    => Initial.handle(entry)
-        }
-      set(entry.target.hash, newVal)
-    }
-  }
-
-  type S = State
-  type Api = MetadataExtractionScheduler
-
-  override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 2
-
-  def initialState: S = State(Map.empty)
-  def processEvent(state: S, event: MetadataEnvelope): S = state.handle(event.entry)
-
-  def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
-    val (stateChanges: Vector[State => State], workEntries: Vector[WorkEntry] @unchecked) =
-      state.objectStates
-        .collect { case (hash, r: Ready) => (hash, r) }
-        .take(10)
-        .map {
-          case (hash, r @ Ready(depValues)) =>
-            extractor.precondition(hash, depValues) match {
-              case None =>
-                // precondition met
-                (
-                  (_: State).set(hash, Scheduled(depValues)),
-                  WorkEntry.opaque(() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext))
-                )
-              case Some(cause) =>
-                (
-                  (_: State).set(hash, PreConditionNotMet(cause)),
-                  (() => Future.successful(Vector.empty)) // FIXME: is there a better way that doesn't involve scheduling a useless process?
-                )
-            }
-        }.toVector.unzip
-    if (stateChanges.isEmpty) (state, Vector.empty)
-    else (stateChanges.foldLeft(state)((s, f) => f(s)), workEntries)
-  }
-
-  override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
-    new MetadataExtractionScheduler {
-      def workHistogram: Future[Map[String, Int]] =
-        handleWithState.access { state =>
-          state.objectStates
-            .groupBy(_._2.productPrefix)
-            .view.mapValues(_.size).toMap
-        }
-    }
-
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
-    import JsonExtra._
-    import spray.json.DefaultJsonProtocol._
-    import spray.json._
-
-    implicit def missingFormat: JsonFormat[Missing] = jsonFormat2(Missing)
-    implicit def existingFormat: JsonFormat[Existing] = jsonFormat1(Existing)
-    implicit def depStateFormat: JsonFormat[DependencyState] = new JsonFormat[DependencyState] {
-      def read(json: JsValue): DependencyState =
-        json.field("type") match {
-          case JsString("Missing")  => json.convertTo[Missing]
-          case JsString("Existing") => json.convertTo[Existing]
-          case x                    => throw DeserializationException(s"Unexpected type '$x' for DependencyState")
-        }
-      def write(obj: DependencyState): JsValue = obj match {
-        case m: Missing  => m.toJson + ("type" -> JsString("Missing"))
-        case e: Existing => e.toJson + ("type" -> JsString("Existing"))
-      }
-    }
-
-    implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat1(CollectingDependencies.apply)
-    implicit def readyFormat: JsonFormat[Ready] = jsonFormat1(Ready.apply)
-    implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
-    implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
-    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat1(PreConditionNotMet.apply)
-    implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
-      import net.virtualvoid.fotofinish.util.JsonExtra._
-      override def read(json: JsValue): HashState =
-        json.field("type") match {
-          case JsString("CollectingDependencies") => json.convertTo[CollectingDependencies]
-          case JsString("Ready")                  => json.convertTo[Ready]
-          case JsString("Scheduled")              => json.convertTo[Scheduled]
-          case JsString("Calculated")             => json.convertTo[Calculated]
-          case JsString("PreConditionNotMet")     => json.convertTo[PreConditionNotMet]
-          case x                                  => throw DeserializationException(s"Unexpected type '$x' for HashState")
-        }
-
-      override def write(obj: HashState): JsValue = obj match {
-        case c: CollectingDependencies => c.toJson + ("type" -> JsString("CollectingDependencies"))
-        case r: Ready                  => r.toJson + ("type" -> JsString("Ready"))
-        case s: Scheduled              => s.toJson + ("type" -> JsString("Scheduled"))
-        case c: Calculated             => c.toJson + ("type" -> JsString("Calculated"))
-        case p: PreConditionNotMet     => p.toJson + ("type" -> JsString("PreConditionNotMet"))
-      }
-    }
-    jsonFormat1(State.apply)
-  }
-
-  override def initializeStateSnapshot(state: State): State =
-    state.mutateStates(_.view.mapValues {
-      case Scheduled(depValues) => Ready(depValues) // throw away markers that a calculation is already in process
-      case x                    => x
-    }.toMap)
 }
 
 trait MetadataApi {
