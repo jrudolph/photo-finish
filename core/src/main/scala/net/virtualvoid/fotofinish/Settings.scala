@@ -14,6 +14,9 @@ object Settings {
   val meta = new File("/home/johannes/git/self/photo-finish/tmprepo/metadata")
   val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")
 
+  repo.mkdirs()
+  meta.mkdirs()
+
   val knownMetadataKinds = Set[MetadataKind](
     IngestionData,
     FileTypeData,
