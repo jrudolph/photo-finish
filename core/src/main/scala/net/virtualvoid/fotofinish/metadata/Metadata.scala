@@ -183,7 +183,7 @@ trait MetadataExtractor {
    *
    * FIXME: is there a better type or name for that method?
    */
-  def precondition(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Option[String] = None
+  def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = None
   protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT]
 }
 
@@ -222,7 +222,7 @@ object MetadataExtractor {
       protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT] =
         f(hash, ctx)
 
-      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Option[String] =
+      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] =
         p(dependencies(0).value.asInstanceOf[cond1.T])
     }
 }
