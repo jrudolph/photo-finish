@@ -94,7 +94,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
           },
           pathPrefix(HashPrefix) { prefix =>
             extractUri { uri =>
-              onSuccess(app.completeIdPrefix(Id.generic("sha-512", prefix))) {
+              onSuccess(app.completeIdPrefix(Id.generic("sha-512-t160", prefix))) {
                 case Some(fileInfo) =>
                   val newUri = uri.withPath(Uri.Path(uri.path.toString.replace(prefix, fileInfo.hash.asHexString)))
                   redirect(newUri, StatusCodes.Found)
