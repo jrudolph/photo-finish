@@ -60,7 +60,7 @@ object MetadataApp {
           .run()
 
       val ingestor = runProcess(PerHashIngestionController.toProcess)
-      val metadataAccess = runProcess(PerObjectMetadataCollector)
+      val metadataAccess = runProcess(PerObjectMetadataCollector.toProcess)
       val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcess))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
