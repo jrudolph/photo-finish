@@ -520,7 +520,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends MetadataPro
                 // precondition met
                 (
                   (_: State).set(hash, Scheduled(depValues)),
-                  (() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)): WorkEntry
+                  WorkEntry.opaque(() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext))
                 )
               case Some(cause) =>
                 (
