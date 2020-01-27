@@ -410,6 +410,152 @@ object IngestionController extends MetadataProcess with SingleEntryState {
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = jsonFormat1(State.apply)
 }
 
+trait PerHashHandleWithStateFunc[S] {
+  def apply[T](key: Hash)(f: S => (S, Vector[WorkEntry], T)): Future[T]
+  def access[T](key: Hash)(f: S => T): Future[T] =
+    apply(key) { state =>
+      (state, Vector.empty, f(state))
+    }
+
+  def handleStream: Sink[(Hash, S => (S, Vector[WorkEntry])), Any]
+}
+trait SimplePerHashProcess { php =>
+  type PerHashState
+  type Api
+
+  def id: String = getClass.getName
+  def version: Int
+
+  def initialPerHashState(hash: Hash): PerHashState
+  def processEvent(value: PerHashState, event: MetadataEnvelope): PerHashState
+  def createWork(state: PerHashState, context: ExtractionContext): (PerHashState, Vector[WorkEntry])
+  def api(handleWithState: PerHashHandleWithStateFunc[PerHashState])(implicit ec: ExecutionContext): Api
+
+  /** Allows to prepare state loaded from snapshot */
+  def initializeStateSnapshot(hash: Hash, state: PerHashState): PerHashState = state
+
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerHashState]
+
+  def toProcess: MetadataProcess { type Api = php.Api } =
+    new MetadataProcess {
+      case class State(data: Map[Hash, PerHashState]) {
+        def update[T](hash: Hash)(f: PerHashState => PerHashState): State =
+          copy(data = data.updated(hash, f(get(hash))))
+        def get(hash: Hash): PerHashState = data.getOrElse(hash, initialPerHashState(hash))
+      }
+
+      type S = State
+      type Api = php.Api
+      override def id: String = php.id
+      def version: Int = php.version
+
+      def initialState: S = State(Map.empty)
+      def processEvent(state: State, event: MetadataEnvelope): State =
+        state.update(event.entry.target.hash)(s => php.processEvent(s, event))
+      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
+        state.data
+          .iterator
+          .filter(d => php.createWork(d._2, context)._2.nonEmpty)
+          .take(10) // FIXME: make parameterizable?
+          .map {
+            case (hash, phs) =>
+              val (newState, work) = php.createWork(phs, context)
+              ((s: State) => s.update(hash)(_ => newState), work)
+          }
+          .foldLeft((state, Vector.empty[WorkEntry])) { (cur, next) =>
+            val (s, wes) = cur
+            val (f, newWes) = next
+            (f(s), wes ++ newWes)
+          }
+      }
+
+      def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
+        php.api(new PerHashHandleWithStateFunc[PerHashState] {
+          override def apply[T](key: Hash)(f: PerHashState => (PerHashState, Vector[WorkEntry], T)): Future[T] =
+            handleWithState.apply[T] { state =>
+              val (newState, entries, t) = f(state.get(key))
+              (state.update(key)(_ => newState), entries, t)
+            }
+
+          override def handleStream: Sink[(Hash, PerHashState => (PerHashState, Vector[WorkEntry])), Any] =
+            Flow[(Hash, PerHashState => (PerHashState, Vector[WorkEntry]))]
+              .map[State => (State, Vector[WorkEntry])] {
+                case (hash, f) => state =>
+                  val (newState, entries) = f(state.get(hash))
+                  (state.update(hash)(_ => newState), entries)
+              }
+              .to(handleWithState.handleStream)
+        })
+
+      override def initializeStateSnapshot(state: State): State =
+        // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
+        // fixed after restart
+        State(state.data.map { case (k, v) => k -> php.initializeStateSnapshot(k, v) })
+
+      type StateEntryT = (Hash, PerHashState)
+      def stateAsEntries(state: State): Iterator[(Hash, PerHashState)] = state.data.iterator
+      def entriesAsState(entries: Iterable[(Hash, PerHashState)]): State = State(entries.toMap)
+      def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, PerHashState)] = {
+        import spray.json.DefaultJsonProtocol._
+        implicit val phsFormat = php.stateFormat
+        implicitly[JsonFormat[(Hash, PerHashState)]]
+      }
+    }
+}
+object PerHashIngestionController extends SimplePerHashProcess {
+  type PerHashState = Vector[IngestionData]
+  type Api = Ingestion
+
+  def version = 1
+
+  def initialPerHashState(hash: Hash): Vector[IngestionData] = Vector.empty
+  def processEvent(value: Vector[IngestionData], event: MetadataEnvelope): Vector[IngestionData] =
+    event.entry match {
+      case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
+      case _                                    => value
+    }
+  def createWork(state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
+
+  def api(handleWithState: PerHashHandleWithStateFunc[PerHashState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
+    def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
+      Flow[(Hash, IngestionData)]
+        .map { case (hash, data) => (hash, handleNewEntry(hash, data)) }
+        .to(handleWithState.handleStream)
+
+    def ingest(hash: Hash, newData: IngestionData): Unit =
+      handleWithState(hash) { state =>
+        val (newState, ses) = handleNewEntry(hash, newData)(state)
+        (newState, ses, ())
+      }
+
+    private def handleNewEntry(hash: Hash, newData: IngestionData): PerHashState => (PerHashState, Vector[WorkEntry]) = state => {
+      def matches(data: IngestionData): Boolean =
+        newData.originalFullFilePath == data.originalFullFilePath
+
+      val newEntries =
+        if (!state.exists(matches)) {
+          println(s"Injecting [$newData]")
+          //IngestionDataExtractor.extractMetadata(fi).toOption.toVector
+          Vector(MetadataEntry(
+            Id.Hashed(hash),
+            Vector.empty,
+            IngestionData,
+            CreationInfo(DateTime.now, false, Ingestion),
+            newData
+          ))
+        } else {
+          //println(s"Did not ingest $fi because there already was an entry")
+          Vector.empty
+        }
+
+      (state, Vector(() => Future.successful(newEntries)))
+    }
+  }
+
+  import spray.json.DefaultJsonProtocol._
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Vector[IngestionData]] = implicitly[JsonFormat[Vector[IngestionData]]]
+}
+
 trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }

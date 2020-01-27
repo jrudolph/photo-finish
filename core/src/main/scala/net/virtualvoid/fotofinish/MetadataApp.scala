@@ -59,7 +59,7 @@ object MetadataApp {
           .to(executor)
           .run()
 
-      val ingestor = runProcess(IngestionController)
+      val ingestor = runProcess(PerHashIngestionController.toProcess)
       val metadataAccess = runProcess(PerObjectMetadataCollector)
       val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e)))
 
