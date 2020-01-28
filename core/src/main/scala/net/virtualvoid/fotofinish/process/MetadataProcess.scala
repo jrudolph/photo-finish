@@ -3,6 +3,7 @@ package process
 
 import java.io.{ File, FileOutputStream }
 import java.nio.file.{ Files, StandardCopyOption }
+import java.sql.{ Connection, ResultSet }
 import java.util.zip.GZIPOutputStream
 
 import akka.actor.ActorSystem
@@ -10,10 +11,11 @@ import akka.http.scaladsl.model.DateTime
 import akka.stream._
 import akka.stream.scaladsl.{ Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
 import akka.util.ByteString
+import javax.sql.DataSource
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.util.{ JsonExtra, StatefulDetachedFlow }
-import spray.json.JsonFormat
+import spray.json.{ JsNull, JsValue, JsonFormat }
 
 import scala.collection.immutable.TreeSet
 import scala.concurrent.duration._
@@ -353,11 +355,25 @@ trait PerHashHandleWithStateFunc[S] {
       (state, Vector.empty, f(state))
     }
 
-  def accessAll[T](f: Iterable[(Hash, S)] => T): Future[T]
-  def accessAllKeys[T](f: Iterable[Hash] => T): Future[T]
+  def accessAll[T](f: Iterator[(Hash, S)] => T): Future[T]
+  def accessAllKeys[T](f: Iterator[Hash] => T): Future[T]
 
   def handleStream: Sink[(Hash, S => (S, Vector[WorkEntry])), Any]
 }
+trait ConnectionProvider {
+  def apply[T](f: Connection => T): T
+}
+object ConnectionProvider {
+  def fromDataSource(ds: DataSource): ConnectionProvider =
+    new ConnectionProvider {
+      override def apply[T](f: Connection => T): T = {
+        val conn = ds.getConnection
+        try f(conn)
+        finally conn.close()
+      }
+    }
+}
+
 trait SimplePerHashProcess { php =>
   type PerHashState
   type Api
@@ -428,11 +444,11 @@ trait SimplePerHashProcess { php =>
               }
               .to(handleWithState.handleStream)
 
-          override def accessAll[T](f: Iterable[(Hash, PerHashState)] => T): Future[T] =
-            handleWithState.access { state => f(state.data) }
+          override def accessAll[T](f: Iterator[(Hash, PerHashState)] => T): Future[T] =
+            handleWithState.access { state => f(state.data.iterator) }
 
-          override def accessAllKeys[T](f: Iterable[Hash] => T): Future[T] =
-            handleWithState.access { state => f(state.data.keys) }
+          override def accessAllKeys[T](f: Iterator[Hash] => T): Future[T] =
+            handleWithState.access { state => f(state.data.keys.iterator) }
         })
 
       override def initializeStateSnapshot(state: State): State =
@@ -447,6 +463,143 @@ trait SimplePerHashProcess { php =>
         import spray.json.DefaultJsonProtocol._
         implicit val phsFormat = php.stateFormat
         implicitly[JsonFormat[(Hash, PerHashState)]]
+      }
+    }
+
+  def toProcessSqlite(withConnection: ConnectionProvider, tableName: String)(implicit entryFormat: JsonFormat[MetadataEntry]): MetadataProcess { type Api = php.Api } =
+    new MetadataProcess with SingleEntryState {
+      trait State {
+        def update(hash: Hash)(f: PerHashState => PerHashState)(implicit connection: Connection): State
+        def get(hash: Hash)(implicit connection: Connection): PerHashState
+        def data(implicit connection: Connection): Iterator[(Hash, PerHashState)]
+        def keys(implicit connection: Connection): Iterator[Hash]
+      }
+
+      type S = State
+      type Api = php.Api
+      override def id: String = php.id
+      def version: Int = php.version
+
+      private val stateImpl =
+        new State {
+          override def update(hash: Hash)(f: PerHashState => PerHashState)(implicit conn: Connection): State = {
+            import spray.json._
+            implicit val phsFormat = php.stateFormat
+            val newState = f(get(hash))
+            val insert = conn.prepareStatement(s"insert or replace into $tableName(hash, data) values (?, ?)")
+            insert.setString(1, hash.toString)
+            insert.setString(2, newState.toJson.compactPrint)
+            insert.execute()
+            this
+          }
+          override def get(hash: Hash)(implicit conn: Connection): PerHashState = {
+            val stmt = conn.prepareStatement(s"select data from $tableName where hash = ?")
+            stmt.setString(1, hash.toString)
+            val rs = stmt.executeQuery()
+
+            if (rs.next()) readFromRS(rs)
+            else initialPerHashState(hash)
+          }
+          override def data(implicit conn: Connection): Iterator[(Hash, PerHashState)] = {
+            val rs =
+              conn.createStatement()
+                .executeQuery(s"select hash, data from $tableName")
+            Iterator.unfold(rs) { rs =>
+              if (rs.next()) Some {
+                import spray.json._
+                implicit val phsFormat = php.stateFormat
+                val hash = Hash.fromPrefixedString(rs.getString("hash")).get
+                val data = rs.getString("data").parseJson.convertTo[php.PerHashState]
+                ((hash, data), rs)
+              }
+              else None
+            }
+          }
+          override def keys(implicit conn: Connection): Iterator[Hash] = {
+            val rs =
+              conn.createStatement()
+                .executeQuery(s"select hash from $tableName")
+            Iterator.unfold(rs) { rs =>
+              if (rs.next()) Some {
+                (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
+              }
+              else None
+            }
+          }
+
+          private def readFromRS(rs: ResultSet): PerHashState = {
+            import spray.json._
+            implicit val phsFormat = php.stateFormat
+            rs.getString("data").parseJson.convertTo[php.PerHashState]
+          }
+        }
+
+      def initialState: S = {
+        withConnection { conn =>
+          val stmt = conn.createStatement
+          stmt.executeUpdate(s"drop table if exists $tableName;")
+          stmt.executeUpdate(s"create table $tableName(hash PRIMARY KEY, data);")
+        }
+        stateImpl
+      }
+      def processEvent(state: State, event: MetadataEnvelope): State = {
+        val hash = event.entry.target.hash
+        withConnection(implicit conn => state.update(hash)(s => php.processEvent(hash, s, event)))
+      }
+
+      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = withConnection { implicit conn =>
+        state.data
+          .iterator
+          .filter(d => php.createWork(d._1, d._2, context)._2.nonEmpty)
+          .take(10) // FIXME: make parameterizable?
+          .map {
+            case (hash, phs) =>
+              val (newState, work) = php.createWork(hash, phs, context)
+              ((s: State) => s.update(hash)(_ => newState), work)
+          }
+          .foldLeft((state, Vector.empty[WorkEntry])) { (cur, next) =>
+            val (s, wes) = cur
+            val (f, newWes) = next
+            (f(s), wes ++ newWes)
+          }
+      }
+
+      def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
+        php.api(new PerHashHandleWithStateFunc[PerHashState] {
+          override def apply[T](key: Hash)(f: PerHashState => (PerHashState, Vector[WorkEntry], T)): Future[T] =
+            withConnection { implicit conn =>
+              handleWithState.apply[T] { state =>
+                val (newState, entries, t) = f(state.get(key))
+                (state.update(key)(_ => newState), entries, t)
+              }
+            }
+
+          override def handleStream: Sink[(Hash, PerHashState => (PerHashState, Vector[WorkEntry])), Any] =
+            Flow[(Hash, PerHashState => (PerHashState, Vector[WorkEntry]))]
+              .map[State => (State, Vector[WorkEntry])] {
+                case (hash, f) => state => withConnection { implicit conn =>
+                  val (newState, entries) = f(state.get(hash))
+                  (state.update(hash)(_ => newState), entries)
+                }
+              }
+              .to(handleWithState.handleStream)
+
+          override def accessAll[T](f: Iterator[(Hash, PerHashState)] => T): Future[T] =
+            handleWithState.access(state => withConnection(conn => f(state.data(conn))))
+
+          override def accessAllKeys[T](f: Iterator[Hash] => T): Future[T] =
+            handleWithState.access(state => withConnection(conn => f(state.keys(conn))))
+        })
+
+      override def initializeStateSnapshot(state: State): State = state
+      // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
+      // fixed after restart
+      //State(state.data.map { case (k, v) => k -> php.initializeStateSnapshot(k, v) })
+      //???
+
+      override def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = new JsonFormat[State] {
+        override def read(json: JsValue): State = stateImpl
+        override def write(obj: State): JsValue = JsNull
       }
     }
 }
@@ -609,6 +762,7 @@ class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends Simp
       def workHistogram: Future[Map[String, Int]] =
         handleWithState.accessAll { states =>
           states
+            .toVector // FIXME: could we somehow support these queries in a better way? (e.g. accumulating numbers directly)
             .groupBy(_._2.productPrefix)
             .view.mapValues(_.size).toMap
         }

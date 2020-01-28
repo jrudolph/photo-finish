@@ -2,8 +2,11 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
+import com.zaxxer.hikari.HikariDataSource
+import javax.sql.DataSource
 import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, SimpleJournalEntry, SimpleKind }
-import net.virtualvoid.fotofinish.metadata.{ Id, MetadataEntry, MetadataEnvelope, MetadataExtractor, MetadataKind }
+import net.virtualvoid.fotofinish.metadata._
+import net.virtualvoid.fotofinish.process.ConnectionProvider
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
@@ -22,6 +25,15 @@ final case class RepositoryConfig(
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
+  val sqliteDbFile: File = new File(metadataDir, "process.db")
+
+  val dbDataSource: DataSource = {
+    val res = new HikariDataSource;
+    res.setJdbcUrl(s"jdbc:sqlite:${sqliteDbFile.getAbsolutePath}")
+    res
+  }
+  val connectionProvider = ConnectionProvider.fromDataSource(dbDataSource)
+
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 
   def repoFile(hash: Hash): File = {
