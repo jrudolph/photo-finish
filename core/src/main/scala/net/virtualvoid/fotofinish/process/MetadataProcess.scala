@@ -34,6 +34,8 @@ trait HandleWithStateFunc[S] {
   def handleStream: Sink[S => (S, Vector[WorkEntry]), Any]
 }
 
+case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
+
 trait MetadataProcess {
   type S
   type Api
@@ -49,12 +51,81 @@ trait MetadataProcess {
   /** Allows to prepare state loaded from snapshot */
   def initializeStateSnapshot(state: S): S = state
 
+  def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[S]): Unit
+  def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]]
+}
+trait LineBasedJsonSnaphotProcess extends MetadataProcess {
+  import spray.json.DefaultJsonProtocol._
+  import spray.json._
+
+  private case class SnapshotHeader(processId: String, processVersion: Int, currentSeqNr: Long)
+  private implicit val headerFormat = jsonFormat3(SnapshotHeader.apply)
+  def saveSnapshot(targetFile: File, config: RepositoryConfig, snapshot: Snapshot[S]): Unit = {
+    val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
+    val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
+
+    try {
+      implicit val seFormat = stateEntryFormat(config.entryFormat)
+      os.write(SnapshotHeader(snapshot.processId, snapshot.processVersion, snapshot.currentSeqNr).toJson.compactPrint.getBytes("utf8"))
+      os.write('\n')
+      stateAsEntries(snapshot.state).foreach { entry =>
+        os.write(entry.toJson.compactPrint.getBytes("utf8"))
+        os.write('\n')
+      }
+    } finally os.close()
+    Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+  }
+  def loadSnapshot(file: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]] = {
+    import system.dispatcher
+
+    if (file.exists) {
+      implicit val seFormat: JsonFormat[StateEntryT] = stateEntryFormat(config.entryFormat)
+
+      val headerAndEntriesF =
+        FileIO.fromPath(file.toPath)
+          .via(Compression.gunzip())
+          .via(Framing.delimiter(ByteString("\n"), 1000000000))
+          .map(_.utf8String)
+          .prefixAndTail(1)
+          .runWith(Sink.head)
+          .flatMap {
+            case (Seq(header), entries) =>
+              val h = header.parseJson.convertTo[SnapshotHeader]
+              entries
+                .map(_.parseJson.convertTo[StateEntryT])
+                .runWith(Sink.seq)
+                .map(es =>
+                  Snapshot[S](h.processId, h.processVersion, h.currentSeqNr, entriesAsState(es))
+                )
+          }
+
+      // FIXME
+      val hs = Await.ready(headerAndEntriesF, 60.seconds)
+
+      hs.value.get
+        .map { s =>
+          require(s.processId == id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [$id].")
+          require(s.processVersion == version, s"Wrong version in snapshot [${s.processVersion}]. Expected [$version].")
+
+          Some(s.copy(state = initializeStateSnapshot(s.state)))
+        }
+        .recover {
+          case NonFatal(ex) =>
+            println(s"Reading snapshot failed because of ${ex.getMessage}. Discarding snapshot.")
+            ex.printStackTrace()
+            None
+        }
+        .get
+    } else
+      None
+  }
+
   type StateEntryT
   def stateAsEntries(state: S): Iterator[StateEntryT]
   def entriesAsState(entries: Iterable[StateEntryT]): S
   def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT]
 }
-trait SingleEntryState extends MetadataProcess {
+trait SingleEntryState extends LineBasedJsonSnaphotProcess {
   override type StateEntryT = S
 
   def stateAsEntries(state: S): Iterator[S] = Iterator(state)
@@ -148,7 +219,7 @@ object MetadataProcess {
 
       def saveSnapshot(force: Boolean = false): ProcessState =
         if ((lastSnapshotAt + config.snapshotOffset < seqNr) || (force && lastSnapshotAt < seqNr)) bench("Serializing state") {
-          serializeState(p, config)(Snapshot(p.id, p.version, seqNr, processState))
+          p.saveSnapshot(processSnapshotFile(p, config), config, Snapshot(p.id, p.version, seqNr, processState))
           this.withLastSnapshotNow
         }
         else this
@@ -222,7 +293,7 @@ object MetadataProcess {
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 
-    val snapshot = bench("Deserializing state")(deserializeState(p, config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState)))
+    val snapshot = bench("Deserializing state")(p.loadSnapshot(processSnapshotFile(p, config), config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState)))
     println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
 
     val processFlow =
@@ -256,76 +327,8 @@ object MetadataProcess {
   }
 
   // FIXME: join with header
-  case class Snapshot[S](processId: String, processVersion: Int, currentSeqNr: Long, state: S)
-  import spray.json.DefaultJsonProtocol._
-  import spray.json._
   private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
     new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
-
-  private case class SnapshotHeader(processId: String, processVersion: Int, currentSeqNr: Long)
-  private implicit val headerFormat = jsonFormat3(SnapshotHeader.apply)
-  private def serializeState(p: MetadataProcess, config: RepositoryConfig)(snapshot: Snapshot[p.S]): Unit = {
-    val targetFile = processSnapshotFile(p, config)
-    val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
-    val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
-
-    try {
-      implicit val seFormat: JsonFormat[p.StateEntryT] = p.stateEntryFormat(config.entryFormat)
-      os.write(SnapshotHeader(snapshot.processId, snapshot.processVersion, snapshot.currentSeqNr).toJson.compactPrint.getBytes("utf8"))
-      os.write('\n')
-      p.stateAsEntries(snapshot.state).foreach { entry =>
-        os.write(entry.toJson.compactPrint.getBytes("utf8"))
-        os.write('\n')
-      }
-    } finally os.close()
-    Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-  }
-  def deserializeState(p: MetadataProcess, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[p.S]] = {
-    import system.dispatcher
-
-    val file = processSnapshotFile(p, config)
-    if (file.exists) {
-      implicit val seFormat: JsonFormat[p.StateEntryT] = p.stateEntryFormat(config.entryFormat)
-
-      val headerAndEntriesF =
-        FileIO.fromPath(file.toPath)
-          .via(Compression.gunzip())
-          .via(Framing.delimiter(ByteString("\n"), 1000000000))
-          .map(_.utf8String)
-          .prefixAndTail(1)
-          .runWith(Sink.head)
-          .flatMap {
-            case (Seq(header), entries) =>
-              val h = header.parseJson.convertTo[SnapshotHeader]
-              entries
-                .map(_.parseJson.convertTo[p.StateEntryT])
-                .runWith(Sink.seq)
-                .map(es =>
-                  Snapshot[p.S](h.processId, h.processVersion, h.currentSeqNr, p.entriesAsState(es))
-                )
-          }
-
-      // FIXME
-      val hs = Await.ready(headerAndEntriesF, 60.seconds)
-
-      hs.value.get
-        .map { s =>
-          require(s.processId == p.id, s"Unexpected process ID in snapshot [${s.processId}]. Expected [${p.id}].")
-          require(s.processVersion == p.version, s"Wrong version in snapshot [${s.processVersion}]. Expected [${p.version}].")
-
-          Some(s.copy(state = p.initializeStateSnapshot(s.state)))
-        }
-        .recover {
-          case NonFatal(ex) =>
-            println(s"Reading snapshot failed because of ${ex.getMessage}. Discarding snapshot.")
-            ex.printStackTrace()
-            None
-        }
-        .get
-    } else
-      None
-  }
-
 }
 
 object GetAllObjectsProcess extends MetadataProcess with SingleEntryState {
@@ -394,7 +397,7 @@ trait SimplePerHashProcess { php =>
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerHashState]
 
   def toProcess: MetadataProcess { type Api = php.Api } =
-    new MetadataProcess {
+    new LineBasedJsonSnaphotProcess {
       case class State(data: Map[Hash, PerHashState]) {
         def update[T](hash: Hash)(f: PerHashState => PerHashState): State =
           copy(data = data.updated(hash, f(get(hash))))
