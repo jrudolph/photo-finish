@@ -44,7 +44,8 @@ object Settings {
       autoExtractors,
       8,
       30.seconds,
-      10000)
+      0
+    )
 
   val scanner = new Scanner(config)
 }
