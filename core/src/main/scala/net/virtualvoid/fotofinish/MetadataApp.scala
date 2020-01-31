@@ -59,9 +59,10 @@ object MetadataApp {
           .to(executor)
           .run()
 
-      val ingestor = runProcess(PerHashIngestionController.toProcess)
-      val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite(config.connectionProvider, "per_object_data")(config.entryFormat))
-      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcess))
+      import _config.entryFormat
+      val ingestor = runProcess(PerHashIngestionController.toProcessSqlite(config.connectionProvider, "ingestion_controller"))
+      val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite(config.connectionProvider, "per_object_data"))
+      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcessSqlite(config.connectionProvider, e.kind.replaceAll("\\W+", "_"))))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)
