@@ -25,7 +25,6 @@ lazy val core: Project = project
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
     ),
 
-    baseDirectory in reStart := (baseDirectory in rootRef).value,
     javaOptions in run += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
     javaOptions in reStart += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
   )
@@ -96,5 +95,6 @@ lazy val basicSettings = Seq(
     "-XX:+PreserveFramePointer",
     "-XX:+UnlockDiagnosticVMOptions",
     "-XX:+DebugNonSafepoints",
-  )
+  ),
+  baseDirectory in reStart := (baseDirectory in rootRef).value,
 )
