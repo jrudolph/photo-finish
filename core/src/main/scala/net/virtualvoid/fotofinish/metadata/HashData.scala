@@ -12,7 +12,7 @@ final case class HashData(
 )
 object HashData extends MetadataKind.Impl[HashData]("net.virtualvoid.fotofinish.metadata.HashData", 1) {
   import spray.json.DefaultJsonProtocol._
-  override implicit def jsonFormat: JsonFormat[HashData] = jsonFormat1(HashData.apply _)
+  override implicit val jsonFormat: JsonFormat[HashData] = jsonFormat1(HashData.apply _)
 }
 
 object HashDataExtractor {
