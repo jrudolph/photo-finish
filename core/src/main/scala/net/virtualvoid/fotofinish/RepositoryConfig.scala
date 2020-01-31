@@ -8,6 +8,7 @@ import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, S
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.process.ConnectionProvider
 import net.virtualvoid.fotofinish.util.JsonExtra
+import org.sqlite.SQLiteConfig
 import spray.json.JsonFormat
 
 import scala.concurrent.duration.FiniteDuration
@@ -28,8 +29,12 @@ final case class RepositoryConfig(
   val sqliteDbFile: File = new File(metadataDir, "process.db")
 
   val dbDataSource: DataSource = {
+    val config = new SQLiteConfig
+    config.setBusyTimeout(50000)
+    config.setCacheSize(500000)
     val res = new HikariDataSource;
     res.setJdbcUrl(s"jdbc:sqlite:${sqliteDbFile.getAbsolutePath}")
+    res.setDataSourceProperties(config.toProperties)
     res
   }
   val connectionProvider = ConnectionProvider.fromDataSource(dbDataSource)
