@@ -77,8 +77,15 @@ object MetadataJournal {
             FileIO.fromPath(config.allMetadataFile.toPath)
               .via(Compression.gunzip())
               .via(Framing.delimiter(ByteString("\n"), 1000000))
-              .map(_.utf8String)
-              .mapConcat(readJournalEntry(config, _).toVector)
+              // batch and async loading
+              .grouped(100) // TODO: make configurable?
+              .mapAsync(8) { lines =>
+                Future {
+                  lines
+                    .flatMap(bs => readJournalEntry(config, bs.utf8String))
+                }
+              }
+              .mapConcat(identity)
               .recoverWithRetries(1, {
                 case z: ZipException => Source.empty
               })
