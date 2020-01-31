@@ -78,11 +78,21 @@ class Scanner(config: RepositoryConfig) {
         (dev, ino) -> info
       }.toMap
 
-  private val FileNamePattern = """^[0-9a-f]{128}$""".r
+  private val FileNamePattern = """^[0-9a-f]{40,}$""".r
   private def scanAllRepoFiles(): Iterator[FileInfo] =
-    Scanner.allFilesMatching(config.primaryStorageDir, byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
+    scanAllRepoFiles(HashAlgorithm.Sha512) ++ scanAllRepoFiles(HashAlgorithm.Sha512T160)
+
+  private def scanAllRepoFiles(algo: HashAlgorithm): Iterator[FileInfo] =
+    Scanner.allFilesMatching(new File(config.storageDir, s"by-${algo.name.toLowerCase}"), byFileName(str => FileNamePattern.findFirstMatchIn(str).isDefined))
       .iterator
-      .map(f => Hash.fromString(config.hashAlgorithm, f.getName))
+      .map { f =>
+        // FIXME: provide through some other means, maybe a different kind of process?
+        // somewhat of a hack to make sure we only provide hashes with the main algorithm
+        if (algo == HashAlgorithm.Sha512)
+          Hash.fromString(HashAlgorithm.Sha512T160, f.getName.take(HashAlgorithm.Sha512T160.hexStringLength))
+        else
+          Hash.fromString(algo, f.getName)
+      }
       .map(config.fileInfoOf)
 }
 
