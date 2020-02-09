@@ -393,8 +393,9 @@ trait SimplePerHashProcess { php =>
   def createWork(hash: Hash, state: PerHashState, context: ExtractionContext): (PerHashState, Vector[WorkEntry])
   def api(handleWithState: PerHashHandleWithStateFunc[PerHashState])(implicit ec: ExecutionContext): Api
 
+  def isTransient(state: PerHashState): Boolean = false
   /** Allows to prepare state loaded from snapshot */
-  def initializeStateSnapshot(hash: Hash, state: PerHashState): PerHashState = state
+  def initializeTransientState(hash: Hash, state: PerHashState): PerHashState = state
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerHashState]
 
@@ -461,7 +462,7 @@ trait SimplePerHashProcess { php =>
       override def initializeStateSnapshot(state: State): State =
         // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
         // fixed after restart
-        State(state.data.map { case (k, v) => k -> php.initializeStateSnapshot(k, v) })
+        State(state.data.map { case (k, v) => k -> php.initializeTransientState(k, v) })
 
       type StateEntryT = (Hash, PerHashState)
       def stateAsEntries(state: State): Iterator[(Hash, PerHashState)] = state.data.iterator
@@ -485,6 +486,7 @@ trait SimplePerHashProcess { php =>
           dirty:      Set[Hash],
           newEntries: Set[Hash],
           withWork:   Set[Hash],
+          transient:  Set[Hash],
           connection: Option[Connection]) {
         def update(hash: Hash)(f: PerHashState => PerHashState): State = {
           val existing = getIfExists(hash)
@@ -494,12 +496,18 @@ trait SimplePerHashProcess { php =>
           val newWithWork =
             if (hasW) withWork + hash
             else withWork - hash
+          val isT = isTransient(newState)
+          val newTransient =
+            if (isT) transient + hash
+            else transient - hash
+
           copy(
             cachedData = cachedData + (hash -> newState),
             dirty = dirty + hash,
             newEntries = newNew,
-            withWork = newWithWork
-          ) //.flushIfNecessary()
+            withWork = newWithWork,
+            transient = newTransient
+          )
         }
         def removeFromWorkList(hash: Hash): State = copy(withWork = withWork - hash)
         def getIfExists(hash: Hash): Option[PerHashState] =
@@ -559,11 +567,13 @@ trait SimplePerHashProcess { php =>
           rs.getString("data").parseJson.convertTo[php.PerHashState]
         }
 
-        def onlyDirty: State =
-          copy(cachedData = cachedData.view.filterKeys(k => dirty(k) || newEntries(k)).toMap)
+        def updateTransient: State =
+          transient.foldLeft(this) { (state, hash) =>
+            state.update(hash)(phs => php.initializeTransientState(hash, phs))
+          }
       }
 
-      def initialState: S = State(Map.empty, Set.empty, Set.empty, Set.empty, None)
+      def initialState: S = State(Map.empty, Set.empty, Set.empty, Set.empty, Set.empty, None)
       def processEvent(state: State, event: MetadataEnvelope): State = {
         val hash = event.entry.target.hash
         state.update(hash)(s => php.processEvent(hash, s, event))
@@ -612,47 +622,66 @@ trait SimplePerHashProcess { php =>
             handleWithState.access(state => f(state.keys))
         })
 
-      override def initializeStateSnapshot(state: State): State = state
-      // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
-      // fixed after restart
-      //State(state.data.map { case (k, v) => k -> php.initializeStateSnapshot(k, v) })
-      //???
+      override def initializeStateSnapshot(state: State): State = state.updateTransient
 
       def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[State]): State = {
         val state = snapshot.state
         val conn = state.connection.getOrElse(openConnectionTo(target))
         val stmt = conn.createStatement
-        stmt.execute("begin transaction")
-        stmt.execute(s"create table if not exists per_hash_data(hash PRIMARY KEY, data)")
-        stmt.execute("create table if not exists meta(process_id, process_version, seq_nr)")
-        stmt.execute("create table if not exists has_work(hash)")
-        stmt.executeUpdate("delete from has_work")
-        stmt.executeUpdate("delete from meta")
 
-        val prepared = conn.prepareStatement("insert into meta(process_id, process_version, seq_nr) values(?, ?, ?)")
-        prepared.setString(1, snapshot.processId)
-        prepared.setInt(2, snapshot.processVersion)
-        prepared.setLong(3, snapshot.currentSeqNr)
-        prepared.executeUpdate() // TODO: check for result
+        def setupTables(): Unit = {
+          stmt.execute(s"create table if not exists per_hash_data(hash PRIMARY KEY, data)")
+          stmt.execute("create table if not exists meta(process_id, process_version, seq_nr)")
+          stmt.execute("create table if not exists has_work(hash)")
+          stmt.execute("create table if not exists transient(hash)")
+          stmt.executeUpdate("delete from meta")
+          // FIXME: do we have better ideas to manage those then to recreate them from scratch? Probably not a problem currently, but has_work could
+          // become quite big
+          stmt.executeUpdate("delete from has_work")
+          stmt.executeUpdate("delete from transient")
+        }
 
-        import spray.json._
-        implicit val phsFormat = php.stateFormat
+        def setMeta(): Unit = {
+          val prepared = conn.prepareStatement("insert into meta(process_id, process_version, seq_nr) values(?, ?, ?)")
+          prepared.setString(1, snapshot.processId)
+          prepared.setInt(2, snapshot.processVersion)
+          prepared.setLong(3, snapshot.currentSeqNr)
+          prepared.executeUpdate() // TODO: check for result
+        }
+        def insertDirty(): Unit = {
+          import spray.json._
+          implicit val phsFormat = php.stateFormat
 
-        val insert = conn.prepareStatement(s"insert or replace into per_hash_data(hash, data) values (?, ?)")
-        val toFlush =
-          state.dirty
-            .map { hash =>
-              hash.toString -> state.cachedData(hash).toJson.compactPrint
+          val insert = conn.prepareStatement(s"insert or replace into per_hash_data(hash, data) values (?, ?)")
+          println(s"[$id] Dirty set: ${state.dirty.size}")
+          val toFlush =
+            state.dirty
+              .map { hash =>
+                hash.toString -> state.cachedData(hash).toJson.compactPrint
+              }
+
+          toFlush
+            .foreach {
+              case (hash, data) =>
+                insert.setString(1, hash)
+                insert.setString(2, data)
+                insert.execute()
             }
-
-        toFlush
-          .foreach {
-            case (hash, data) =>
-              insert.setString(1, hash)
-              insert.setString(2, data)
-              insert.execute()
+        }
+        def insertSet(tableName: String, set: Set[Hash]): Unit = {
+          val insert = conn.prepareStatement(s"insert into $tableName(hash) values(?)")
+          set.foreach { h =>
+            insert.setString(1, h.toString)
+            insert.execute()
           }
+        }
 
+        stmt.execute("begin transaction")
+        setupTables()
+        setMeta()
+        insertDirty()
+        insertSet("has_work", state.withWork)
+        insertSet("transient", state.transient)
         stmt.execute("commit transaction")
         state.copy(dirty = Set.empty, newEntries = Set.empty, connection = Some(conn)) // TODO: drop part of the cache?
       }
@@ -665,20 +694,24 @@ trait SimplePerHashProcess { php =>
           val processVersion = rs.getInt("process_version")
           val seqNr = rs.getLong("seq_nr")
 
-          val rs2 = stmt.executeQuery("select hash from has_work")
-          val hasWork = Iterator.unfold(rs2) { rs =>
-            if (rs.next()) Some {
-              (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
-            }
-            else None
-          }.toSet
+          def loadSet(tableName: String): Set[Hash] = {
+            val rs2 = stmt.executeQuery(s"select hash from $tableName")
+            Iterator.unfold(rs2) { rs =>
+              if (rs.next()) Some {
+                (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
+              }
+              else None
+            }.toSet
+          }
+          val hasWork = loadSet("has_work")
+          val transient = loadSet("transient")
 
           Some {
             Snapshot(
               processId,
               processVersion,
               seqNr,
-              State(Map.empty, Set.empty, Set.empty, hasWork, Some(conn))
+              State(Map.empty, Set.empty, Set.empty, hasWork, transient, Some(conn))
             )
           }
         } else None
@@ -906,7 +939,8 @@ class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends Simp
     hashStateFormat
   }
 
-  override def initializeStateSnapshot(hash: Hash, state: HashState): HashState =
+  override def isTransient(state: HashState): Boolean = state.isInstanceOf[Scheduled]
+  override def initializeTransientState(hash: Hash, state: HashState): HashState =
     state match {
       case Scheduled(depValues) => Ready(depValues)
       case x                    => x
