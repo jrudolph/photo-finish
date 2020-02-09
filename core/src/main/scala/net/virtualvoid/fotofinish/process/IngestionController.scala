@@ -13,7 +13,7 @@ trait Ingestion {
   def ingest(hash: Hash, data: IngestionData): Unit
 }
 
-object PerHashIngestionController extends SimplePerHashProcess {
+object IngestionController extends PerHashProcess {
   type PerHashState = Vector[IngestionData]
   type Api = Ingestion
 

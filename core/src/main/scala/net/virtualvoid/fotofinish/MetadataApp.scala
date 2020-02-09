@@ -60,9 +60,9 @@ object MetadataApp {
           .run()
 
       import _config.entryFormat
-      val ingestor = runProcess(PerHashIngestionController.toProcessSqlite)
+      val ingestor = runProcess(IngestionController.toProcessSqlite)
       val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite)
-      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcessSqlite))
+      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e).toProcessSqlite))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)

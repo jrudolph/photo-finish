@@ -24,7 +24,7 @@ trait PerHashHandleWithStateFunc[S] {
   def handleStream: Sink[(Hash, S => (S, Vector[WorkEntry])), Any]
 }
 
-trait SimplePerHashProcess { php =>
+trait PerHashProcess { php =>
   type PerHashState
   type Api
 

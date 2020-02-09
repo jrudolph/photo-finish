@@ -13,7 +13,7 @@ trait MetadataApi {
   def knownObjects(): Future[TreeSet[Id]]
 }
 
-object PerObjectMetadataCollector extends SimplePerHashProcess {
+object PerObjectMetadataCollector extends PerHashProcess {
   type PerHashState = Metadata
   override type Api = MetadataApi
 

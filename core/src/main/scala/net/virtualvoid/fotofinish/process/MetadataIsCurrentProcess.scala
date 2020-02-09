@@ -11,7 +11,7 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class PerHashMetadataIsCurrentProcess(extractor: MetadataExtractor) extends SimplePerHashProcess {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProcess {
   type PerHashState = HashState
 
   sealed trait DependencyState {
