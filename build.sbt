@@ -18,8 +18,6 @@ lazy val core: Project = project
       "net.java.dev.jna" % "jna" % "5.5.0",
       "org.xerial" % "sqlite-jdbc" % "3.30.1",
 
-      "com.zaxxer" % "HikariCP" % "3.4.2",
-
       "com.typesafe.akka" %% "akka-actor" % akkaV,
       "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime

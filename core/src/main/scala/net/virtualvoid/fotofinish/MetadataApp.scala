@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata, MetadataExtractor }
+import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
 import net.virtualvoid.fotofinish.process._
 
 import scala.collection.immutable.TreeSet
@@ -60,9 +60,9 @@ object MetadataApp {
           .run()
 
       import _config.entryFormat
-      val ingestor = runProcess(PerHashIngestionController.toProcessSqlite(config.connectionProvider, "ingestion_controller"))
-      val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite(config.connectionProvider, "per_object_data"))
-      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcessSqlite(config.connectionProvider, e.kind.replaceAll("\\W+", "_"))))
+      val ingestor = runProcess(PerHashIngestionController.toProcessSqlite)
+      val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite)
+      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new PerHashMetadataIsCurrentProcess(e).toProcessSqlite))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)

@@ -3,8 +3,7 @@ package process
 
 import java.io.{ File, FileOutputStream }
 import java.nio.file.{ Files, StandardCopyOption }
-import java.sql.{ Connection, ResultSet }
-import java.util.concurrent.ThreadLocalRandom
+import java.sql.{ Connection, DriverManager, ResultSet }
 import java.util.zip.GZIPOutputStream
 
 import akka.actor.ActorSystem
@@ -51,7 +50,7 @@ trait MetadataProcess {
   /** Allows to prepare state loaded from snapshot */
   def initializeStateSnapshot(state: S): S = state
 
-  def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[S]): Unit
+  def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[S]): S
   def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]]
 }
 trait LineBasedJsonSnaphotProcess extends MetadataProcess {
@@ -60,7 +59,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
 
   private case class SnapshotHeader(processId: String, processVersion: Int, currentSeqNr: Long)
   private implicit val headerFormat = jsonFormat3(SnapshotHeader.apply)
-  def saveSnapshot(targetFile: File, config: RepositoryConfig, snapshot: Snapshot[S]): Unit = {
+  def saveSnapshot(targetFile: File, config: RepositoryConfig, snapshot: Snapshot[S]): S = {
     val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
     val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
 
@@ -74,6 +73,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
       }
     } finally os.close()
     Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    snapshot.state
   }
   def loadSnapshot(file: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]] = {
     import system.dispatcher
@@ -219,8 +219,10 @@ object MetadataProcess {
 
       def saveSnapshot(force: Boolean = false): ProcessState =
         if ((lastSnapshotAt + config.snapshotOffset < seqNr) || (force && lastSnapshotAt < seqNr)) bench("Serializing state") {
-          p.saveSnapshot(processSnapshotFile(p, config), config, Snapshot(p.id, p.version, seqNr, processState))
-          this.withLastSnapshotNow
+          val newState = p.saveSnapshot(processSnapshotFile(p, config), config, Snapshot(p.id, p.version, seqNr, processState))
+          this
+            .withLastSnapshotNow
+            .withState(newState)
         }
         else this
     }
@@ -328,7 +330,7 @@ object MetadataProcess {
 
   // FIXME: join with header
   private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
-    new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot.json.gz")
+    new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot")
 }
 
 object GetAllObjectsProcess extends MetadataProcess with SingleEntryState {
@@ -471,16 +473,20 @@ trait SimplePerHashProcess { php =>
       }
     }
 
-  def toProcessSqlite(withConnection: ConnectionProvider, tableName: String)(implicit entryFormat: JsonFormat[MetadataEntry]): MetadataProcess { type Api = php.Api } =
-    new MetadataProcess with SingleEntryState {
+  def toProcessSqlite(implicit entryFormat: JsonFormat[MetadataEntry]): MetadataProcess { type Api = php.Api } =
+    new MetadataProcess {
       type S = State
       type Api = php.Api
       override def id: String = php.id
       def version: Int = php.version
-      private val dirtyThreshold = 1000 + ThreadLocalRandom.current().nextInt(1, 200)
 
-      case class State(cachedData: Map[Hash, PerHashState], dirty: Set[Hash], newEntries: Set[Hash], withWork: Set[Hash]) {
-        def update(hash: Hash)(f: PerHashState => PerHashState)(implicit conn: Connection): State = {
+      case class State(
+          cachedData: Map[Hash, PerHashState],
+          dirty:      Set[Hash],
+          newEntries: Set[Hash],
+          withWork:   Set[Hash],
+          connection: Option[Connection]) {
+        def update(hash: Hash)(f: PerHashState => PerHashState): State = {
           val existing = getIfExists(hash)
           val newState = f(existing.getOrElse(initialPerHashState(hash)))
           val newNew = if (existing.isDefined) newEntries else newEntries + hash
@@ -493,87 +499,56 @@ trait SimplePerHashProcess { php =>
             dirty = dirty + hash,
             newEntries = newNew,
             withWork = newWithWork
-          ).flushIfNecessary()
+          ) //.flushIfNecessary()
         }
         def removeFromWorkList(hash: Hash): State = copy(withWork = withWork - hash)
-        def flushIfNecessary()(implicit conn: Connection): State =
-          if (dirty.size > dirtyThreshold) { // TODO: make configurable
-            import spray.json._
-            implicit val phsFormat = php.stateFormat
-
-            val stmt = conn.createStatement()
-            stmt.execute("begin transaction")
-
-            try {
-              val insert = conn.prepareStatement(s"insert or replace into $tableName(hash, data) values (?, ?)")
-              val start = System.nanoTime()
-
-              val toFlush =
-                dirty
-                  .map { hash =>
-                    hash.toString -> cachedData(hash).toJson.compactPrint
-                  }
-
-              toFlush
-                .foreach {
-                  case (hash, data) =>
-                    insert.setString(1, hash)
-                    insert.setString(2, data)
-                    insert.execute()
-                }
-              stmt.execute("commit transaction")
-              val lasted = System.nanoTime() - start
-              val totalBytes = toFlush.map(_._2.length.toLong).sum
-              println(s"[$id] Flushed ${dirty.size} objects (${totalBytes.toLong / 1000} kB) in ${lasted / 1000000} ms - ${dirty.size.toLong * 1000000000 / lasted} objects per second / ${totalBytes.toLong * 1000 / lasted} MB/s")
-            } catch {
-              case t: Throwable =>
-                println(s"Aborted transaction because of ${t.getMessage}")
-                stmt.execute("rollback transaction")
-            }
-
-            copy(dirty = Set.empty, newEntries = Set.empty)
-          } else this
-        def getIfExists(hash: Hash)(implicit conn: Connection): Option[PerHashState] =
+        def getIfExists(hash: Hash): Option[PerHashState] =
           cachedData.get(hash).orElse(retrieve(hash))
-        def get(hash: Hash)(implicit conn: Connection): PerHashState =
+        def get(hash: Hash): PerHashState =
           getIfExists(hash).getOrElse(initialPerHashState(hash))
-        def retrieve(hash: Hash)(implicit conn: Connection): Option[PerHashState] = {
-          val stmt = conn.prepareStatement(s"select data from $tableName where hash = ?")
+        def retrieve(hash: Hash): Option[PerHashState] = connection.flatMap { conn =>
+          val stmt = conn.prepareStatement("select data from per_hash_data where hash = ?")
           stmt.setString(1, hash.toString)
           val rs = stmt.executeQuery()
 
           if (rs.next()) Some(readFromRS(rs))
           else None
         }
-        def data(implicit conn: Connection): Iterator[(Hash, PerHashState)] = {
-          val rs =
-            conn.createStatement()
-              .executeQuery(s"select hash, data from $tableName")
-
+        def data: Iterator[(Hash, PerHashState)] = {
           val existing =
-            Iterator.unfold(rs) { rs =>
-              if (rs.next()) Some {
-                import spray.json._
-                implicit val phsFormat = php.stateFormat
-                val hash = Hash.fromPrefixedString(rs.getString("hash")).get
-                def load(): PerHashState = rs.getString("data").parseJson.convertTo[php.PerHashState]
-                ((hash, cachedData.getOrElse(hash, load())), rs)
+            connection.iterator.flatMap { conn =>
+              val rs =
+                conn.createStatement()
+                  .executeQuery("select hash, data from per_hash_data")
+              Iterator.unfold(rs) { rs =>
+                if (rs.next()) Some {
+                  import spray.json._
+                  implicit val phsFormat = php.stateFormat
+                  val hash = Hash.fromPrefixedString(rs.getString("hash")).get
+
+                  def load(): PerHashState = rs.getString("data").parseJson.convertTo[php.PerHashState]
+
+                  ((hash, cachedData.getOrElse(hash, load())), rs)
+                }
+                else None
               }
-              else None
             }
           val newE = newEntries.iterator.map(n => n -> cachedData(n))
           existing ++ newE
         }
-        def keys(implicit conn: Connection): Iterator[Hash] = {
-          val rs =
-            conn.createStatement()
-              .executeQuery(s"select hash from $tableName")
+        def keys: Iterator[Hash] = {
           val existing =
-            Iterator.unfold(rs) { rs =>
-              if (rs.next()) Some {
-                (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
+            connection.iterator.flatMap { conn =>
+              val rs =
+                conn.createStatement()
+                  .executeQuery("select hash from per_hash_data")
+
+              Iterator.unfold(rs) { rs =>
+                if (rs.next()) Some {
+                  (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
+                }
+                else None
               }
-              else None
             }
           existing ++ newEntries.iterator
         }
@@ -588,20 +563,13 @@ trait SimplePerHashProcess { php =>
           copy(cachedData = cachedData.view.filterKeys(k => dirty(k) || newEntries(k)).toMap)
       }
 
-      def initialState: S = {
-        withConnection { conn =>
-          val stmt = conn.createStatement
-          stmt.executeUpdate(s"drop table if exists $tableName;")
-          stmt.executeUpdate(s"create table $tableName(hash PRIMARY KEY, data);")
-        }
-        State(Map.empty, Set.empty, Set.empty, Set.empty)
-      }
+      def initialState: S = State(Map.empty, Set.empty, Set.empty, Set.empty, None)
       def processEvent(state: State, event: MetadataEnvelope): State = {
         val hash = event.entry.target.hash
-        withConnection(implicit conn => state.update(hash)(s => php.processEvent(hash, s, event)))
+        state.update(hash)(s => php.processEvent(hash, s, event))
       }
 
-      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = withConnection { implicit conn =>
+      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) =
         state.withWork
           .take(10)
           .map(h => h -> state.get(h))
@@ -618,34 +586,30 @@ trait SimplePerHashProcess { php =>
             val (f, newWes) = next
             (f(s), wes ++ newWes)
           }
-      }
 
       def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
         php.api(new PerHashHandleWithStateFunc[PerHashState] {
           override def apply[T](key: Hash)(f: PerHashState => (PerHashState, Vector[WorkEntry], T)): Future[T] =
             handleWithState.apply[T] { state =>
-              withConnection { implicit conn =>
-
-                val (newState, entries, t) = f(state.get(key))
-                (state.update(key)(_ => newState), entries, t)
-              }
+              val (newState, entries, t) = f(state.get(key))
+              (state.update(key)(_ => newState), entries, t)
             }
 
           override def handleStream: Sink[(Hash, PerHashState => (PerHashState, Vector[WorkEntry])), Any] =
             Flow[(Hash, PerHashState => (PerHashState, Vector[WorkEntry]))]
               .map[State => (State, Vector[WorkEntry])] {
-                case (hash, f) => state => withConnection { implicit conn =>
+                case (hash, f) => state =>
                   val (newState, entries) = f(state.get(hash))
                   (state.update(hash)(_ => newState), entries)
-                }
+
               }
               .to(handleWithState.handleStream)
 
           override def accessAll[T](f: Iterator[(Hash, PerHashState)] => T): Future[T] =
-            handleWithState.access(state => withConnection(conn => f(state.data(conn))))
+            handleWithState.access(state => f(state.data))
 
           override def accessAllKeys[T](f: Iterator[Hash] => T): Future[T] =
-            handleWithState.access(state => withConnection(conn => f(state.keys(conn))))
+            handleWithState.access(state => f(state.keys))
         })
 
       override def initializeStateSnapshot(state: State): State = state
@@ -653,16 +617,75 @@ trait SimplePerHashProcess { php =>
       // fixed after restart
       //State(state.data.map { case (k, v) => k -> php.initializeStateSnapshot(k, v) })
       //???
-      override def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[State] = {
-        import spray.json._
-        import spray.json.DefaultJsonProtocol._
 
-        implicit val phsF = php.stateFormat
-        implicit val stateF = jsonFormat4(State.apply _)
-        new JsonFormat[State] {
-          override def read(json: JsValue): State = json.convertTo[State]
-          override def write(obj: State): JsValue = obj.onlyDirty.toJson
-        }
+      def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[State]): State = {
+        val state = snapshot.state
+        val conn = state.connection.getOrElse(openConnectionTo(target))
+        val stmt = conn.createStatement
+        stmt.execute("begin transaction")
+        stmt.execute(s"create table if not exists per_hash_data(hash PRIMARY KEY, data)")
+        stmt.execute("create table if not exists meta(process_id, process_version, seq_nr)")
+        stmt.execute("create table if not exists has_work(hash)")
+        stmt.executeUpdate("delete from has_work")
+        stmt.executeUpdate("delete from meta")
+
+        val prepared = conn.prepareStatement("insert into meta(process_id, process_version, seq_nr) values(?, ?, ?)")
+        prepared.setString(1, snapshot.processId)
+        prepared.setInt(2, snapshot.processVersion)
+        prepared.setLong(3, snapshot.currentSeqNr)
+        prepared.executeUpdate() // TODO: check for result
+
+        import spray.json._
+        implicit val phsFormat = php.stateFormat
+
+        val insert = conn.prepareStatement(s"insert or replace into per_hash_data(hash, data) values (?, ?)")
+        val toFlush =
+          state.dirty
+            .map { hash =>
+              hash.toString -> state.cachedData(hash).toJson.compactPrint
+            }
+
+        toFlush
+          .foreach {
+            case (hash, data) =>
+              insert.setString(1, hash)
+              insert.setString(2, data)
+              insert.execute()
+          }
+
+        stmt.execute("commit transaction")
+        state.copy(dirty = Set.empty, newEntries = Set.empty, connection = Some(conn)) // TODO: drop part of the cache?
+      }
+      def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[State]] =
+        if (target.exists()) {
+          val conn = openConnectionTo(target)
+          val stmt = conn.createStatement
+          val rs = stmt.executeQuery("select process_id, process_version, seq_nr from meta")
+          val processId = rs.getString("process_id")
+          val processVersion = rs.getInt("process_version")
+          val seqNr = rs.getLong("seq_nr")
+
+          val rs2 = stmt.executeQuery("select hash from has_work")
+          val hasWork = Iterator.unfold(rs2) { rs =>
+            if (rs.next()) Some {
+              (Hash.fromPrefixedString(rs.getString("hash")).get, rs)
+            }
+            else None
+          }.toSet
+
+          Some {
+            Snapshot(
+              processId,
+              processVersion,
+              seqNr,
+              State(Map.empty, Set.empty, Set.empty, hasWork, Some(conn))
+            )
+          }
+        } else None
+
+      private def openConnectionTo(target: File): Connection = {
+        val url = s"jdbc:sqlite:${target.getAbsolutePath}"
+        DriverManager.getConnection(url)
       }
     }
 }
