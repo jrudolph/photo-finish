@@ -21,7 +21,6 @@ trait MetadataApp {
   def knownObjects(): Future[TreeSet[Id]]
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
   def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
-  def byOriginalFileName: ByOriginalFileName
 }
 
 object MetadataApp {
@@ -72,7 +71,8 @@ object MetadataApp {
       def extractorStatus(): Future[Seq[(String, Map[String, Int])]] =
         Future.traverse(metadataStatuses) { case (extractor, a) => a.workHistogram.map(histo => extractor.kind -> histo) }
 
-      val byOriginalFileName = runProcess(OriginalFileNameAccess)
+      val byOriginalFileName = runProcess(new HierarchySorter(OriginalFileNameHierarchy))
+      val byYearMonth = runProcess(new HierarchySorter(YearMonthHierarchy))
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()
