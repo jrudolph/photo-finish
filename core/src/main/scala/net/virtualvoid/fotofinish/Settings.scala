@@ -24,6 +24,7 @@ object Settings {
     Thumbnail,
     FaceData,
     HashData,
+    FFProbeData,
   )
 
   val autoExtractors: Set[MetadataExtractor] = Set(
@@ -31,6 +32,7 @@ object Settings {
     ExifBaseDataExtractor.instance,
     ThumbnailExtractor.instance,
     HashDataExtractor.instance,
+    FFProbeDataExtractor.instance,
   //FaceDataExtractor.instance,
   )
 
