@@ -3,6 +3,7 @@ package metadata
 
 import net.virtualvoid.facerecognition.{ Face, FaceRecognitionLib }
 import spray.json.JsonFormat
+import spray.json.DefaultJsonProtocol._
 
 import scala.collection.immutable
 
@@ -39,10 +40,16 @@ case class Rectangle(
     width:  Int,
     height: Int
 )
+object Rectangle {
+  implicit val rectangleFormat = jsonFormat4(Rectangle.apply _)
+}
 case class FaceInfo(
     rectangle: Rectangle,
     modelData: Array[Float]
 )
+object FaceInfo {
+  implicit val faceFormat = jsonFormat2(FaceInfo.apply _)
+}
 case class RecognizerSettings(
     recognizerLibVersion: Int,
     numJitters:           Int
@@ -53,9 +60,6 @@ case class FaceData(
 )
 object FaceData extends MetadataKind.Impl[FaceData]("net.virtualvoid.fotofinish.metadata.FaceData", 1) {
   implicit val jsonFormat: JsonFormat[FaceData] = {
-    import spray.json.DefaultJsonProtocol._
-    implicit val rectangleFormat = jsonFormat4(Rectangle)
-    implicit val faceFormat = jsonFormat2(FaceInfo)
     implicit val settingsFormat = jsonFormat2(RecognizerSettings)
 
     jsonFormat2(FaceData.apply _)

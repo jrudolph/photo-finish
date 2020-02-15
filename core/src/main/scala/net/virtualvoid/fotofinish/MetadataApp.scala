@@ -74,6 +74,8 @@ object MetadataApp {
       val byOriginalFileName = runProcess(new HierarchySorter(OriginalFileNameHierarchy))
       val byYearMonth = runProcess(new HierarchySorter(YearMonthHierarchy))
 
+      runProcess(new FaceDistanceCollector(0.2f))
+
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()
           .map { ids =>
