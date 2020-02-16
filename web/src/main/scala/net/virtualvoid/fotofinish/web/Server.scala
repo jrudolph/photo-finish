@@ -10,8 +10,10 @@ import akka.http.scaladsl.model.Uri
 import akka.http.scaladsl.server.{ ExceptionHandler, PathMatcher, PathMatcher1, Route }
 import play.twirl.api.Html
 import util.ImageTools
+import util.DateTimeExtra._
 import html._
 import metadata._
+import net.virtualvoid.fotofinish.metadata.Id.Hashed
 
 import scala.concurrent.Future
 import scala.util.control.NonFatal
@@ -75,14 +77,37 @@ private[web] class ServerRoutes(app: MetadataApp) {
                     }
                   }
                 },
-                path("face" / IntNumber) { i =>
-                  complete {
-                    meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
-                      HttpEntity(
-                        MediaTypes.`image/jpeg`,
-                        ImageTools.crop(face.rectangle)(fileInfo.repoFile))
+                pathPrefix("face" / IntNumber) { i =>
+                  concat(
+                    pathEndOrSingleSlash {
+                      complete {
+                        meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+                          HttpEntity(
+                            MediaTypes.`image/jpeg`,
+                            ImageTools.crop(face.rectangle)(fileInfo.repoFile))
+                        }
+                      }
+                    },
+                    path("info"./) {
+                      onSuccess(app.faceApi.similarFacesTo(fileInfo.hash, i)) { neighbors =>
+                        def hashInfo(hash: Hash): Future[String] =
+                          app.metadataFor(Hashed(hash)).map { meta =>
+                            MetadataShortcuts.DateTaken(meta).fold("")(dt => s"${dt.fromNow} $dt ")
+                          }
+                        def title(entry: (Hash, Int, Float)): Future[String] =
+                          hashInfo(entry._1).map(hi => s"${hi}distance: ${entry._3}")
+                        def mapEntry(entry: (Hash, Int, Float)): Future[(Hash, Int, Float, String)] = title(entry).map(t => (entry._1, entry._2, entry._3, t))
+
+                        onSuccess(Future.traverse(neighbors)(mapEntry)) { annotatedNeighbors =>
+                          complete {
+                            meta.get(MetadataShortcuts.Faces).lift(i).map { thisFace =>
+                              FaceInfoPage(thisFace, annotatedNeighbors)
+                            }
+                          }
+                        }
+                      }
                     }
-                  }
+                  )
                 },
                 redirectToTrailingSlashIfMissing(StatusCodes.Found) {
                   pathSingleSlash {

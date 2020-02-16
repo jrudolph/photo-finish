@@ -21,6 +21,7 @@ trait MetadataApp {
   def knownObjects(): Future[TreeSet[Id]]
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
   def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
+  def faceApi: SimilarFaces
 }
 
 object MetadataApp {
@@ -74,7 +75,10 @@ object MetadataApp {
       val byOriginalFileName = runProcess(new HierarchySorter(OriginalFileNameHierarchy))
       val byYearMonth = runProcess(new HierarchySorter(YearMonthHierarchy))
 
-      runProcess(new FaceDistanceCollector(0.2f))
+      /*val faceApi = new SimilarFaces {
+        override def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] = Future.successful(Vector.empty)
+      }*/
+      val faceApi = runProcess(new FaceDistanceCollector(0.45f))
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()

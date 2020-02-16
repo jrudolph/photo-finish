@@ -1,0 +1,16 @@
+@import net.virtualvoid.fotofinish.Hash
+@import net.virtualvoid.fotofinish.metadata.FaceInfo
+
+@(thisFace: FaceInfo, neighbors: Vector[(Hash, Int, Float, String)])
+
+<a href="../../.."><img src="../../../oriented" width="750px"/></a>
+
+<img src=".." width="150px"/>
+
+<h3>@{neighbors.size} Neighbors</h3>
+
+<div>
+@for((hash, idx, dist, title) <- neighbors.sortBy(_._3)) {
+    <a href="/images/sha-512-t160/@{hash.asHexString}/face/@idx/info/"><img src="/images/sha-512-t160/@{hash.asHexString}/face/@idx" width="150px" title="@title"/></a>
+}
+</div>
