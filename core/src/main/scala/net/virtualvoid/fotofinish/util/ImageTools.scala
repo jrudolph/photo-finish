@@ -11,15 +11,24 @@ import javax.imageio.ImageIO
 import net.virtualvoid.fotofinish.metadata.Orientation
 import net.virtualvoid.fotofinish.metadata.Rectangle
 
+import scala.util.control.NonFatal
+
 object ImageTools {
   type ImageTransformation = File => ByteString
 
   def crop(rectangle: Rectangle): ImageTransformation = transformJpeg { image =>
     // rectangles might reach outside of actual image so we need to clip at image edges
     // to avoid exception with getSubimage
-    val croppedWidth = math.min(rectangle.width, image.getWidth - rectangle.left)
-    val croppedHeight = math.min(rectangle.height, image.getHeight - rectangle.top)
-    image.getSubimage(rectangle.left, rectangle.top, croppedWidth, croppedHeight)
+
+    val croppedX = math.max(0, math.min(image.getWidth, rectangle.left))
+    val croppedY = math.max(0, math.min(image.getHeight, rectangle.top))
+    val croppedWidth = math.min(rectangle.width, image.getWidth - croppedX)
+    val croppedHeight = math.min(rectangle.height, image.getHeight - croppedY)
+    try image.getSubimage(croppedX, croppedY, croppedWidth, croppedHeight)
+    catch {
+      case NonFatal(ex) =>
+        throw new IllegalArgumentException(s"Crop rectangle: $rectangle image width: ${image.getWidth} height: ${image.getHeight} croppedX: $croppedX croppedY: $croppedY croppedWidth: $croppedWidth croppedHeight: $croppedHeight", ex)
+    }
   }
 
   def correctOrientation(orientation: Orientation): ImageTransformation = transformJpeg { image =>
