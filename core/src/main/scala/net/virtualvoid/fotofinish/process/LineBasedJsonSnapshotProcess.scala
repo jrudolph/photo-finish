@@ -11,7 +11,7 @@ import net.virtualvoid.fotofinish.RepositoryConfig
 import net.virtualvoid.fotofinish.metadata.MetadataEntry
 import spray.json.JsonFormat
 
-import scala.concurrent.Await
+import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
@@ -54,7 +54,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
             case (Seq(header), entries) =>
               val h = header.parseJson.convertTo[SnapshotHeader]
               entries
-                .map(_.parseJson.convertTo[StateEntryT])
+                .mapAsyncUnordered(8)(str => Future(str.parseJson.convertTo[StateEntryT]))
                 .runWith(Sink.seq)
                 .map(es =>
                   Snapshot[S](h.processId, h.processVersion, h.currentSeqNr, entriesAsState(es))
