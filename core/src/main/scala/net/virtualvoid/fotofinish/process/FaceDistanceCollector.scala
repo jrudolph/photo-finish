@@ -1,28 +1,34 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.{ ClusterTest, Hash }
 import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, FaceData, FaceInfo, MetadataEntry, MetadataEnvelope, Rectangle }
 import spray.json.JsonFormat
 
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ ExecutionContext, Future }
+
+trait SimilarFaces {
+  def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]]
+}
 
 class FaceDistanceCollector(threshold: Float) extends LineBasedJsonSnaphotProcess {
+  private val effectiveThreshold = FaceUtils.thresholdFromFloat(threshold)
+
   case class FaceId(
-      hash:      Hash,
-      idx:       Int,
-      rectangle: Rectangle
+      hash: Hash,
+      idx:  Int
+  //rectangle: Rectangle
   )
   case class PerFace(
       faceId:    FaceId,
-      info:      FaceInfo,
-      neighbors: Vector[(FaceId, Float)]
+      vector:    FaceUtils.FeatureVector,
+      neighbors: Vector[(FaceId, Int)]
   ) {
-    def addNeighbor(f: FaceId, distance: Float): PerFace = copy(neighbors = neighbors :+ (f -> distance))
+    def addNeighbor(f: FaceId, distance: Int): PerFace = copy(neighbors = neighbors :+ (f -> distance))
   }
   case class State(entries: Map[FaceId, PerFace]) {
     def handle(hash: Hash, data: FaceData): State = {
-      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx, faceInfo.rectangle)
-      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), faceInfo, Vector.empty)
+      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx) //, faceInfo.rectangle)
+      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Vector.empty)
 
       val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
 
@@ -33,20 +39,23 @@ class FaceDistanceCollector(threshold: Float) extends LineBasedJsonSnaphotProces
       val neighbors =
         entries
           .values
-          .map(e => e -> FaceUtils.sqdistFloat(e.info.modelData, perFace.info.modelData, threshold))
-          .filter(_._2 < threshold)
+          .map(e => e -> FaceUtils.sqdist(e.vector, perFace.vector, effectiveThreshold))
+          .filter(_._2 < effectiveThreshold)
 
       neighbors.foldLeft(addFace(perFace))((state, f) => state.addNeighbor(f._1.faceId, perFace.faceId, f._2))
     }
     def addFace(perFace: PerFace): State = copy(entries = entries + (perFace.faceId -> perFace))
     def update(face: FaceId, f: PerFace => PerFace): State = copy(entries = entries + (face -> f(entries(face))))
-    def addNeighbor(f1: FaceId, f2: FaceId, distance: Float): State =
+    def addNeighbor(f1: FaceId, f2: FaceId, distance: Int): State =
       update(f1, _.addNeighbor(f2, distance))
         .update(f2, _.addNeighbor(f1, distance))
+
+    def similarFacesTo(hash: Hash, idx: Int): Vector[(Hash, Int, Float)] =
+      entries.get(FaceId(hash, idx)).fold(Vector.empty[(Hash, Int, Float)])(_.neighbors.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
   }
 
   type S = State
-  type Api = Unit
+  type Api = SimilarFaces
 
   def version: Int = 1
   def initialState: State = State(Map.empty)
@@ -55,7 +64,11 @@ class FaceDistanceCollector(threshold: Float) extends LineBasedJsonSnaphotProces
     case _        => state
   }
   def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
-  def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): Unit = ()
+  def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): SimilarFaces =
+    new SimilarFaces {
+      def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
+        handleWithState.access(_.similarFacesTo(hash, idx))
+    }
 
   type StateEntryT = (FaceId, PerFace)
   def stateAsEntries(state: State): Iterator[StateEntryT] = state.entries.iterator
@@ -63,15 +76,28 @@ class FaceDistanceCollector(threshold: Float) extends LineBasedJsonSnaphotProces
   def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT] = {
     import spray.json._
     import DefaultJsonProtocol._
-    implicit val faceIdFormat: JsonFormat[FaceId] = jsonFormat3(FaceId)
+    implicit val faceIdFormat: JsonFormat[FaceId] = jsonFormat2(FaceId)
     implicit val perFaceFormat: JsonFormat[PerFace] = jsonFormat3(PerFace)
     implicitly[JsonFormat[StateEntryT]]
   }
 }
 
 object FaceUtils {
-  type FeatureVector = Array[Float]
-  def sqdistFloat(a1: FeatureVector, a2: FeatureVector, threshold: Float): Float = {
+  val Factor = 200
+  def thresholdFromFloat(thres: Float): Int = {
+    val x = (thres * Factor).toInt
+    x * x
+  }
+  def createVector(fs: Array[Float]): FeatureVector =
+    fs.map { f =>
+      val i = (f * Factor).toInt
+      val res = i.toByte
+      if (i != res) throw new IllegalStateException(s"$f $i $res")
+      res
+    }
+
+  type FeatureVector = Array[Byte]
+  def sqdist(a1: FeatureVector, a2: FeatureVector, threshold: Int): Int = {
     /* naive but slow because of boxing algorithm
     (a1, a2).zipped
       .map {
@@ -82,10 +108,14 @@ object FaceUtils {
      */
 
     var i = 0
-    var sqDiff = 0f
+    var sqDiff = 0
     while (i < a1.length && sqDiff < threshold) {
-      val diff = a1(i) - a2(i)
+      val x1 = a1(i)
+      val x2 = a2(i)
+      val diff = x1 - x2
+
       sqDiff += diff * diff
+      //println(f"x1: $x1%3d x2: $x2%3d diff: $diff%5d sqDiff:$sqDiff%5d")
 
       i += 1
     }
