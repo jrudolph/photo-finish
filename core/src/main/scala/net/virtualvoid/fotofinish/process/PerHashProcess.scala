@@ -115,7 +115,7 @@ trait PerKeyProcess { pkp =>
       def version: Int = pkp.version
 
       class ConnectionInfo(val connection: Connection) {
-        lazy val loadDataStatement: PreparedStatement = connection.prepareStatement("select data from per_hash_data where hash = ?")
+        lazy val loadDataStatement: PreparedStatement = connection.prepareStatement("select data from key_data where key = ?")
       }
 
       case class State(
@@ -169,12 +169,12 @@ trait PerKeyProcess { pkp =>
             connection.iterator.flatMap { conn =>
               val rs =
                 conn.connection.createStatement()
-                  .executeQuery("select hash, data from per_hash_data")
+                  .executeQuery("select key, data from key_data")
               Iterator.unfold(rs) { rs =>
                 if (rs.next()) Some {
                   import spray.json._
                   implicit val phsFormat = pkp.stateFormat
-                  val key = deserializeKey(rs.getString("hash"))
+                  val key = deserializeKey(rs.getString("key"))
 
                   def load(): PerKeyState = rs.getString("data").parseJson.convertTo[pkp.PerKeyState]
 
@@ -191,11 +191,11 @@ trait PerKeyProcess { pkp =>
             connection.iterator.flatMap { conn =>
               val rs =
                 conn.connection.createStatement()
-                  .executeQuery("select hash from per_hash_data")
+                  .executeQuery("select key from key_data")
 
               Iterator.unfold(rs) { rs =>
                 if (rs.next()) Some {
-                  (deserializeKey(rs.getString("hash")), rs)
+                  (deserializeKey(rs.getString("key")), rs)
                 }
                 else None
               }
@@ -263,9 +263,9 @@ trait PerKeyProcess { pkp =>
           override def handleStream: Sink[(Key, PerKeyState => (PerKeyState, Vector[WorkEntry])), Any] =
             Flow[(Key, PerKeyState => (PerKeyState, Vector[WorkEntry]))]
               .map[State => (State, Vector[WorkEntry])] {
-                case (hash, f) => state =>
-                  val (newState, entries) = f(state.get(hash))
-                  (state.update(hash)(_ => newState), entries)
+                case (key, f) => state =>
+                  val (newState, entries) = f(state.get(key))
+                  (state.update(key)(_ => newState), entries)
 
               }
               .to(handleWithState.handleStream)
@@ -291,10 +291,10 @@ trait PerKeyProcess { pkp =>
           stmt.execute("pragma synchronous=0")
         }
         def setupTables(): Unit = {
-          stmt.execute(s"create table if not exists per_hash_data(hash PRIMARY KEY, data)")
+          stmt.execute(s"create table if not exists key_data(key PRIMARY KEY, data)")
           stmt.execute("create table if not exists meta(process_id, process_version, seq_nr, global_state)")
-          stmt.execute("create table if not exists has_work(hash)")
-          stmt.execute("create table if not exists transient(hash)")
+          stmt.execute("create table if not exists has_work(key)")
+          stmt.execute("create table if not exists transient(key)")
           stmt.executeUpdate("delete from meta")
           // FIXME: do we have better ideas to manage those then to recreate them from scratch? Probably not a problem currently, but has_work could
           // become quite big
@@ -315,7 +315,7 @@ trait PerKeyProcess { pkp =>
           import spray.json._
           implicit val phsFormat = pkp.stateFormat
 
-          val insert = conn.prepareStatement(s"insert or replace into per_hash_data(hash, data) values (?, ?)")
+          val insert = conn.prepareStatement(s"insert or replace into key_data(key, data) values (?, ?)")
           println(s"[$id] Dirty set: ${state.dirty.size}")
           state.dirty
             .iterator
@@ -326,7 +326,7 @@ trait PerKeyProcess { pkp =>
             }
         }
         def insertSet(tableName: String, set: Set[Key]): Unit = {
-          val insert = conn.prepareStatement(s"insert into $tableName(hash) values(?)")
+          val insert = conn.prepareStatement(s"insert into $tableName(key) values(?)")
           set.foreach { h =>
             insert.setString(1, serializeKey(h))
             insert.execute()
@@ -357,10 +357,10 @@ trait PerKeyProcess { pkp =>
           }
 
           def loadSet(tableName: String): Set[Key] = {
-            val rs2 = stmt.executeQuery(s"select hash from $tableName")
+            val rs2 = stmt.executeQuery(s"select key from $tableName")
             Iterator.unfold(rs2) { rs =>
               if (rs.next()) Some {
-                (deserializeKey(rs.getString("hash")), rs)
+                (deserializeKey(rs.getString("key")), rs)
               }
               else None
             }.toSet
