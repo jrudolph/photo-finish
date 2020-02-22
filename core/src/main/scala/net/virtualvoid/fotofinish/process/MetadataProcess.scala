@@ -204,7 +204,20 @@ object MetadataProcess {
     def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 
-    val snapshot = bench("Deserializing state")(p.loadSnapshot(processSnapshotFile(p, config), config).getOrElse(Snapshot(p.id, p.version, -1L, p.initialState)))
+    val snapshotFile = processSnapshotFile(p, config)
+    val snapshot =
+      bench("Deserializing state") { Try(p.loadSnapshot(snapshotFile, config)) }
+        .recover {
+          case ex =>
+            println(s"[${p.id}] Loading snapshot from [$snapshotFile] failed with $ex, replacing snapshot and replaying from scratch")
+            snapshotFile.renameTo(new File(snapshotFile.getAbsolutePath + ".bak"))
+
+            ex.printStackTrace()
+            None
+        }
+        .get
+        .getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+
     println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
 
     val processFlow =
