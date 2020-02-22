@@ -48,7 +48,7 @@ trait PerHashProcess extends PerKeyProcess {
   override def deserializeKey(keyString: String): Hash = Hash.fromPrefixedString(keyString).get
 }
 
-trait PerKeyProcess { pkp => // FIXME: rename
+trait PerKeyProcess { pkp =>
   type Key
   type PerKeyState
   type Api
@@ -106,97 +106,6 @@ trait PerKeyProcess { pkp => // FIXME: rename
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerKeyState]
   def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[GlobalState]
-
-  /*def toProcess: MetadataProcess { type Api = php.Api } =
-    new LineBasedJsonSnaphotProcess {
-      case class State(global: GlobalState, data: Map[Hash, PerHashState]) {
-        def update[T](hash: Hash)(f: PerHashState => PerHashState): State =
-          set(hash, f(get(hash)))
-        def get(hash: Hash): PerHashState = data.getOrElse(hash, initialPerHashState(hash))
-        def set(hash: Hash, value: PerHashState): State = copy(data = data.updated(hash, value))
-      }
-
-      type S = State
-      type Api = php.Api
-      override def id: String = php.id
-      def version: Int = php.version
-
-      def initialState: S = State(initialGlobalState, Map.empty)
-      def processEvent(state: State, event: MetadataEnvelope): State = {
-        val hash = event.entry.target.hash
-
-        def interpretEffect(state: State, e: php.Effect): State = e match {
-          case php.FlatMapHashState(hash, f) =>
-            val (newState, nextEffect) = f(state.get(hash))
-            interpretEffect(state.set(hash, newState), nextEffect)
-          case php.FlatMapGlobalState(f) =>
-            val (newState, nextEffect) = f(state.global)
-            interpretEffect(state.copy(global = newState), nextEffect)
-          case php.Multiple(head +: tail) =>
-            val newState = interpretEffect(state, head)
-            if (tail.isEmpty) newState
-            else interpretEffect(newState, Multiple(tail))
-          case Effect.Empty => state
-        }
-
-        interpretEffect(state, php.processEvent(hash, state.get(hash), event))
-      }
-
-      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
-        state.data
-          .iterator
-          .filter(d => php.createWork(d._1, d._2, context)._2.nonEmpty)
-          .take(10) // FIXME: make parameterizable?
-          .map {
-            case (hash, phs) =>
-              val (newState, work) = php.createWork(hash, phs, context)
-              ((s: State) => s.update(hash)(_ => newState), work)
-          }
-          .foldLeft((state, Vector.empty[WorkEntry])) { (cur, next) =>
-            val (s, wes) = cur
-            val (f, newWes) = next
-            (f(s), wes ++ newWes)
-          }
-      }
-
-      def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api =
-        php.api(new PerHashHandleWithStateFunc[PerHashState] {
-          override def apply[T](key: Hash)(f: PerHashState => (PerHashState, Vector[WorkEntry], T)): Future[T] =
-            handleWithState.apply[T] { state =>
-              val (newState, entries, t) = f(state.get(key))
-              (state.update(key)(_ => newState), entries, t)
-            }
-
-          override def handleStream: Sink[(Hash, PerHashState => (PerHashState, Vector[WorkEntry])), Any] =
-            Flow[(Hash, PerHashState => (PerHashState, Vector[WorkEntry]))]
-              .map[State => (State, Vector[WorkEntry])] {
-                case (hash, f) => state =>
-                  val (newState, entries) = f(state.get(hash))
-                  (state.update(hash)(_ => newState), entries)
-              }
-              .to(handleWithState.handleStream)
-
-          override def accessAll[T](f: Iterator[(Hash, PerHashState)] => T): Future[T] =
-            handleWithState.access { state => f(state.data.iterator) }
-
-          override def accessAllKeys[T](f: Iterator[Hash] => T): Future[T] =
-            handleWithState.access { state => f(state.data.keys.iterator) }
-        })
-
-      override def initializeStateSnapshot(state: State): State =
-        // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
-        // fixed after restart
-        state.copy(data = state.data.map { case (k, v) => k -> php.initializeTransientState(k, v) })
-
-      type StateEntryT = (Hash, PerHashState)
-      def stateAsEntries(state: State): Iterator[(Hash, PerHashState)] = state.data.iterator
-      def entriesAsState(entries: Iterable[(Hash, PerHashState)]): State = ??? // State(entries.toMap)
-      def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, PerHashState)] = {
-        import spray.json.DefaultJsonProtocol._
-        implicit val phsFormat = php.stateFormat
-        implicitly[JsonFormat[(Hash, PerHashState)]]
-      }
-    }*/
 
   def toProcessSqlite(implicit entryFormat: JsonFormat[MetadataEntry]): MetadataProcess { type Api = pkp.Api } =
     new MetadataProcess {
