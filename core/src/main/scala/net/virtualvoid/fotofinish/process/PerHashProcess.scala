@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish.process
 
 import java.io.File
-import java.sql.{ Connection, DriverManager, ResultSet }
+import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
@@ -114,6 +114,10 @@ trait PerKeyProcess { pkp =>
       override def id: String = pkp.id
       def version: Int = pkp.version
 
+      class ConnectionInfo(val connection: Connection) {
+        lazy val loadDataStatement: PreparedStatement = connection.prepareStatement("select data from per_hash_data where hash = ?")
+      }
+
       case class State(
           global:     GlobalState,
           cachedData: Map[Key, PerKeyState],
@@ -121,7 +125,7 @@ trait PerKeyProcess { pkp =>
           newEntries: Set[Key],
           withWork:   Set[Key],
           transient:  Set[Key],
-          connection: Option[Connection]) {
+          connection: Option[ConnectionInfo]) {
         def update(key: Key)(f: PerKeyState => PerKeyState): State = {
           val existing = getIfExists(key)
           val newState = f(existing.getOrElse(initialPerKeyState(key)))
@@ -153,7 +157,7 @@ trait PerKeyProcess { pkp =>
         def get(key: Key): PerKeyState =
           getIfExists(key).getOrElse(initialPerKeyState(key))
         def retrieve(key: Key): Option[PerKeyState] = connection.flatMap { conn =>
-          val stmt = conn.prepareStatement("select data from per_hash_data where hash = ?")
+          val stmt = conn.loadDataStatement
           stmt.setString(1, serializeKey(key))
           val rs = stmt.executeQuery()
 
@@ -164,7 +168,7 @@ trait PerKeyProcess { pkp =>
           val existing =
             connection.iterator.flatMap { conn =>
               val rs =
-                conn.createStatement()
+                conn.connection.createStatement()
                   .executeQuery("select hash, data from per_hash_data")
               Iterator.unfold(rs) { rs =>
                 if (rs.next()) Some {
@@ -186,7 +190,7 @@ trait PerKeyProcess { pkp =>
           val existing =
             connection.iterator.flatMap { conn =>
               val rs =
-                conn.createStatement()
+                conn.connection.createStatement()
                   .executeQuery("select hash from per_hash_data")
 
               Iterator.unfold(rs) { rs =>
@@ -277,11 +281,12 @@ trait PerKeyProcess { pkp =>
 
       def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[State]): State = {
         val state = snapshot.state
-        val conn = state.connection.getOrElse(openConnectionTo(target))
+        val connectionInfo = state.connection.getOrElse(new ConnectionInfo(openConnectionTo(target)))
+        val conn = connectionInfo.connection
         val stmt = conn.createStatement
 
         def pragmas(): Unit = {
-          stmt.execute("pragma journal_mode=wal")
+          //stmt.execute("pragma journal_mode=wal")
           stmt.execute("pragma page_size=65536")
           stmt.execute("pragma synchronous=0")
         }
@@ -342,7 +347,7 @@ trait PerKeyProcess { pkp =>
         insertSet("has_work", state.withWork)
         insertSet("transient", state.transient)
         stmt.execute("commit transaction")
-        state.copy(dirty = Set.empty, newEntries = Set.empty, connection = Some(conn)) // TODO: drop part of the cache?
+        state.copy(dirty = Set.empty, newEntries = Set.empty, connection = Some(connectionInfo)) // TODO: drop part of the cache?
       }
       def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[State]] =
         if (target.exists()) {
@@ -374,7 +379,7 @@ trait PerKeyProcess { pkp =>
               processId,
               processVersion,
               seqNr,
-              State(globalState, Map.empty, Set.empty, Set.empty, hasWork, transient, Some(conn))
+              State(globalState, Map.empty, Set.empty, Set.empty, hasWork, transient, Some(new ConnectionInfo(conn)))
             )
           }
         } else None
