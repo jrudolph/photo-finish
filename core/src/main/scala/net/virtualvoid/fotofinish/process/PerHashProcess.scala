@@ -5,9 +5,9 @@ import java.sql.{ Connection, DriverManager, ResultSet }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
-import net.virtualvoid.fotofinish.{ Hash, RepositoryConfig }
 import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, MetadataEntry, MetadataEnvelope }
-import spray.json.JsonFormat
+import net.virtualvoid.fotofinish.{ Hash, RepositoryConfig }
+import spray.json.{ JsNull, JsValue, JsonFormat }
 
 import scala.concurrent.{ ExecutionContext, Future }
 
@@ -24,15 +24,59 @@ trait PerHashHandleWithStateFunc[S] {
   def handleStream: Sink[(Hash, S => (S, Vector[WorkEntry])), Any]
 }
 
+trait PerHashProcessWithNoGlobalState extends PerHashProcess {
+  type GlobalState = AnyRef
+  def initialGlobalState: AnyRef = null
+  def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[AnyRef] = new JsonFormat[AnyRef] {
+    override def write(obj: AnyRef): JsValue = JsNull
+    override def read(json: JsValue): AnyRef = null
+  }
+}
+
 trait PerHashProcess { php =>
   type PerHashState
   type Api
+  type GlobalState
+
+  sealed trait Effect {
+    def and(nextEffect: Effect): Effect = Multiple(this, nextEffect)
+    def and(effects: Seq[Effect]): Effect = Multiple(Vector(this) ++ effects)
+    def accessHashState(hash: Hash)(f: PerHashState => Effect): Effect =
+      flatMapHashState(hash)(s => (s, f(s)))
+    def setHashState(hash: Hash, newState: PerHashState): Effect =
+      mapHashState(hash)(_ => newState)
+    def mapHashState(hash: Hash)(f: PerHashState => PerHashState): Effect =
+      flatMapHashState(hash)(s => f(s) -> Effect.Empty)
+    def flatMapHashState(hash: Hash)(f: PerHashState => (PerHashState, Effect)): Effect =
+      and(FlatMapHashState(hash, f))
+
+    def flatMapGlobalState(f: GlobalState => (GlobalState, Effect)): Effect =
+      and(FlatMapGlobalState(f))
+    def mapGlobalState(f: GlobalState => GlobalState): Effect =
+      flatMapGlobalState(s => f(s) -> Effect.Empty)
+  }
+  // the empty effect
+  case object Effect extends Effect {
+    val Empty: Effect = this
+  }
+  case class FlatMapGlobalState(f: GlobalState => (GlobalState, Effect)) extends Effect
+  case class FlatMapHashState(hash: Hash, f: PerHashState => (PerHashState, Effect)) extends Effect
+  case class Multiple(effects: Vector[Effect]) extends Effect
+  object Multiple {
+    def apply(first: Effect, next: Effect): Effect = (first, next) match {
+      case (Multiple(es1), Multiple(es2)) => Multiple(es1 ++ es2)
+      case (Multiple(es1), e2)            => Multiple(es1 :+ e2)
+      case (e1, Multiple(es2))            => Multiple(e1 +: es2)
+      case (e1, e2)                       => Multiple(Vector(e1, e2))
+    }
+  }
 
   def id: String = getClass.getName
   def version: Int
 
+  def initialGlobalState: GlobalState
   def initialPerHashState(hash: Hash): PerHashState
-  def processEvent(hash: Hash, state: PerHashState, event: MetadataEnvelope): PerHashState
+  def processEvent(hash: Hash, state: PerHashState, event: MetadataEnvelope): Effect
   def hasWork(hash: Hash, state: PerHashState): Boolean
   def createWork(hash: Hash, state: PerHashState, context: ExtractionContext): (PerHashState, Vector[WorkEntry])
   def api(handleWithState: PerHashHandleWithStateFunc[PerHashState])(implicit ec: ExecutionContext): Api
@@ -42,13 +86,15 @@ trait PerHashProcess { php =>
   def initializeTransientState(hash: Hash, state: PerHashState): PerHashState = state
 
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerHashState]
+  def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[GlobalState]
 
   def toProcess: MetadataProcess { type Api = php.Api } =
     new LineBasedJsonSnaphotProcess {
-      case class State(data: Map[Hash, PerHashState]) {
+      case class State(global: GlobalState, data: Map[Hash, PerHashState]) {
         def update[T](hash: Hash)(f: PerHashState => PerHashState): State =
-          copy(data = data.updated(hash, f(get(hash))))
+          set(hash, f(get(hash)))
         def get(hash: Hash): PerHashState = data.getOrElse(hash, initialPerHashState(hash))
+        def set(hash: Hash, value: PerHashState): State = copy(data = data.updated(hash, value))
       }
 
       type S = State
@@ -56,10 +102,25 @@ trait PerHashProcess { php =>
       override def id: String = php.id
       def version: Int = php.version
 
-      def initialState: S = State(Map.empty)
+      def initialState: S = State(initialGlobalState, Map.empty)
       def processEvent(state: State, event: MetadataEnvelope): State = {
         val hash = event.entry.target.hash
-        state.update(hash)(s => php.processEvent(hash, s, event))
+
+        def interpretEffect(state: State, e: php.Effect): State = e match {
+          case php.FlatMapHashState(hash, f) =>
+            val (newState, nextEffect) = f(state.get(hash))
+            interpretEffect(state.set(hash, newState), nextEffect)
+          case php.FlatMapGlobalState(f) =>
+            val (newState, nextEffect) = f(state.global)
+            interpretEffect(state.copy(global = newState), nextEffect)
+          case php.Multiple(head +: tail) =>
+            val newState = interpretEffect(state, head)
+            if (tail.isEmpty) newState
+            else interpretEffect(newState, Multiple(tail))
+          case Effect.Empty => state
+        }
+
+        interpretEffect(state, php.processEvent(hash, state.get(hash), event))
       }
 
       def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) = {
@@ -106,11 +167,11 @@ trait PerHashProcess { php =>
       override def initializeStateSnapshot(state: State): State =
         // FIXME: this can be quite expensive, we should probably have some global state to track state that needs to be
         // fixed after restart
-        State(state.data.map { case (k, v) => k -> php.initializeTransientState(k, v) })
+        state.copy(data = state.data.map { case (k, v) => k -> php.initializeTransientState(k, v) })
 
       type StateEntryT = (Hash, PerHashState)
       def stateAsEntries(state: State): Iterator[(Hash, PerHashState)] = state.data.iterator
-      def entriesAsState(entries: Iterable[(Hash, PerHashState)]): State = State(entries.toMap)
+      def entriesAsState(entries: Iterable[(Hash, PerHashState)]): State = ??? // State(entries.toMap)
       def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[(Hash, PerHashState)] = {
         import spray.json.DefaultJsonProtocol._
         implicit val phsFormat = php.stateFormat
@@ -126,6 +187,7 @@ trait PerHashProcess { php =>
       def version: Int = php.version
 
       case class State(
+          global:     GlobalState,
           cachedData: Map[Hash, PerHashState],
           dirty:      Set[Hash],
           newEntries: Set[Hash],
@@ -135,6 +197,10 @@ trait PerHashProcess { php =>
         def update(hash: Hash)(f: PerHashState => PerHashState): State = {
           val existing = getIfExists(hash)
           val newState = f(existing.getOrElse(initialPerHashState(hash)))
+          set(hash, newState)
+        }
+        def set(hash: Hash, newState: PerHashState): State = {
+          val existing = getIfExists(hash)
           val newNew = if (existing.isDefined) newEntries else newEntries + hash
           val hasW = hasWork(hash, newState)
           val newWithWork =
@@ -217,10 +283,25 @@ trait PerHashProcess { php =>
           }
       }
 
-      def initialState: S = State(Map.empty, Set.empty, Set.empty, Set.empty, Set.empty, None)
+      def initialState: S = State(php.initialGlobalState, Map.empty, Set.empty, Set.empty, Set.empty, Set.empty, None)
       def processEvent(state: State, event: MetadataEnvelope): State = {
         val hash = event.entry.target.hash
-        state.update(hash)(s => php.processEvent(hash, s, event))
+
+        def interpretEffect(state: State, e: php.Effect): State = e match {
+          case php.FlatMapHashState(hash, f) =>
+            val (newState, nextEffect) = f(state.get(hash))
+            interpretEffect(state.set(hash, newState), nextEffect)
+          case php.FlatMapGlobalState(f) =>
+            val (newState, nextEffect) = f(state.global)
+            interpretEffect(state.copy(global = newState), nextEffect)
+          case php.Multiple(head +: tail) =>
+            val newState = interpretEffect(state, head)
+            if (tail.isEmpty) newState
+            else interpretEffect(newState, Multiple(tail))
+          case Effect.Empty => state
+        }
+
+        interpretEffect(state, php.processEvent(hash, state.get(hash), event))
       }
 
       def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) =
@@ -273,9 +354,14 @@ trait PerHashProcess { php =>
         val conn = state.connection.getOrElse(openConnectionTo(target))
         val stmt = conn.createStatement
 
+        def pragmas(): Unit = {
+          stmt.execute("pragma journal_mode=wal")
+          stmt.execute("pragma page_size=65536")
+          stmt.execute("pragma synchronous=0")
+        }
         def setupTables(): Unit = {
           stmt.execute(s"create table if not exists per_hash_data(hash PRIMARY KEY, data)")
-          stmt.execute("create table if not exists meta(process_id, process_version, seq_nr)")
+          stmt.execute("create table if not exists meta(process_id, process_version, seq_nr, global_state)")
           stmt.execute("create table if not exists has_work(hash)")
           stmt.execute("create table if not exists transient(hash)")
           stmt.executeUpdate("delete from meta")
@@ -286,10 +372,12 @@ trait PerHashProcess { php =>
         }
 
         def setMeta(): Unit = {
-          val prepared = conn.prepareStatement("insert into meta(process_id, process_version, seq_nr) values(?, ?, ?)")
+          val prepared = conn.prepareStatement("insert into meta(process_id, process_version, seq_nr, global_state) values(?, ?, ?, ?)")
           prepared.setString(1, snapshot.processId)
           prepared.setInt(2, snapshot.processVersion)
           prepared.setLong(3, snapshot.currentSeqNr)
+          import spray.json._
+          prepared.setString(4, snapshot.state.global.toJson(globalStateFormat(config.entryFormat)).compactPrint)
           prepared.executeUpdate() // TODO: check for result
         }
         def insertDirty(): Unit = {
@@ -320,6 +408,7 @@ trait PerHashProcess { php =>
           }
         }
 
+        pragmas()
         stmt.execute("begin transaction")
         setupTables()
         setMeta()
@@ -333,10 +422,14 @@ trait PerHashProcess { php =>
         if (target.exists()) {
           val conn = openConnectionTo(target)
           val stmt = conn.createStatement
-          val rs = stmt.executeQuery("select process_id, process_version, seq_nr from meta")
+          val rs = stmt.executeQuery("select process_id, process_version, seq_nr, global_state from meta")
           val processId = rs.getString("process_id")
           val processVersion = rs.getInt("process_version")
           val seqNr = rs.getLong("seq_nr")
+          val globalState = {
+            import spray.json._
+            rs.getString("global_state").parseJson.convertTo[GlobalState](globalStateFormat(config.entryFormat))
+          }
 
           def loadSet(tableName: String): Set[Hash] = {
             val rs2 = stmt.executeQuery(s"select hash from $tableName")
@@ -355,7 +448,7 @@ trait PerHashProcess { php =>
               processId,
               processVersion,
               seqNr,
-              State(Map.empty, Set.empty, Set.empty, hasWork, transient, Some(conn))
+              State(globalState, Map.empty, Set.empty, Set.empty, hasWork, transient, Some(conn))
             )
           }
         } else None

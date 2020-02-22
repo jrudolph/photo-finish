@@ -13,15 +13,15 @@ trait MetadataApi {
   def knownObjects(): Future[TreeSet[Id]]
 }
 
-object PerObjectMetadataCollector extends PerHashProcess {
+object PerObjectMetadataCollector extends PerHashProcessWithNoGlobalState {
   type PerHashState = Metadata
   override type Api = MetadataApi
 
   def version: Int = 2
 
   def initialPerHashState(hash: Hash): Metadata = Metadata(Vector.empty)
-  def processEvent(hash: Hash, state: Metadata, event: MetadataEnvelope): Metadata =
-    state.copy(entries = state.entries :+ event.entry)
+  def processEvent(hash: Hash, state: Metadata, event: MetadataEnvelope): Effect =
+    Effect.setHashState(hash, state.copy(entries = state.entries :+ event.entry))
 
   def hasWork(hash: Hash, state: Metadata): Boolean = false
   def createWork(hash: Hash, state: Metadata, context: ExtractionContext): (Metadata, Vector[WorkEntry]) = (state, Vector.empty)

@@ -13,18 +13,21 @@ trait Ingestion {
   def ingest(hash: Hash, data: IngestionData): Unit
 }
 
-object IngestionController extends PerHashProcess {
+object IngestionController extends PerHashProcessWithNoGlobalState {
   type PerHashState = Vector[IngestionData]
   type Api = Ingestion
 
   def version = 1
 
   def initialPerHashState(hash: Hash): Vector[IngestionData] = Vector.empty
-  def processEvent(hash: Hash, value: Vector[IngestionData], event: MetadataEnvelope): Vector[IngestionData] =
-    event.entry match {
-      case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
-      case _                                    => value
-    }
+  def processEvent(hash: Hash, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
+    Effect.setHashState(
+      hash,
+      event.entry match {
+        case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
+        case _                                    => value
+      }
+    )
 
   def hasWork(hash: Hash, state: Vector[IngestionData]): Boolean = false
   def createWork(hash: Hash, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)

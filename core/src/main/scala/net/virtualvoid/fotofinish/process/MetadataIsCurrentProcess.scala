@@ -11,7 +11,7 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProcess {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProcessWithNoGlobalState {
   type PerHashState = HashState
 
   sealed trait DependencyState {
@@ -91,7 +91,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProc
   def version: Int = 3
 
   def initialPerHashState(hash: Hash): HashState = Initial
-  def processEvent(hash: Hash, state: HashState, event: MetadataEnvelope): HashState = state.handle(event.entry)
+  def processEvent(hash: Hash, state: HashState, event: MetadataEnvelope): Effect = Effect.setHashState(hash, state.handle(event.entry))
 
   def hasWork(hash: Hash, state: HashState): Boolean = state.isInstanceOf[Ready]
   def createWork(hash: Hash, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
