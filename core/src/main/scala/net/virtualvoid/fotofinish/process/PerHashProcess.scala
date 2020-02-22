@@ -317,18 +317,12 @@ trait PerKeyProcess { pkp =>
 
           val insert = conn.prepareStatement(s"insert or replace into per_hash_data(hash, data) values (?, ?)")
           println(s"[$id] Dirty set: ${state.dirty.size}")
-          val toFlush =
-            state.dirty
-              .map { key =>
-                serializeKey(key) -> state.cachedData(key).toJson.compactPrint
-              }
-
-          toFlush
-            .foreach {
-              case (key, data) =>
-                insert.setString(1, key)
-                insert.setString(2, data)
-                insert.execute()
+          state.dirty
+            .iterator
+            .foreach { key =>
+              insert.setString(1, serializeKey(key))
+              insert.setString(2, state.cachedData(key).toJson.compactPrint)
+              insert.execute()
             }
         }
         def insertSet(tableName: String, set: Set[Key]): Unit = {
