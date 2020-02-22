@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.{ ClusterTest, Hash }
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, FaceData, FaceInfo, MetadataEntry, MetadataEnvelope, Rectangle }
+import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.metadata._
 import spray.json.JsonFormat
 
 import scala.concurrent.{ ExecutionContext, Future }
@@ -80,6 +80,116 @@ class FaceDistanceCollector(threshold: Float) extends LineBasedJsonSnaphotProces
     implicit val perFaceFormat: JsonFormat[PerFace] = jsonFormat3(PerFace)
     implicitly[JsonFormat[StateEntryT]]
   }
+}
+
+class PerHashFaceDistanceCollector(threshold: Float) extends PerHashProcess {
+  type GlobalState = Global
+  type PerHashState = PerHash
+  type Api = SimilarFaces
+
+  private val effectiveThreshold = FaceUtils.thresholdFromFloat(threshold)
+
+  case class Global(
+      vectors: Vector[(FaceUtils.FeatureVector, FaceId)]
+  ) {
+    def handle(hash: Hash, data: FaceData): (Global, Effect) = {
+      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx) //, faceInfo.rectangle)
+      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Vector.empty)
+      val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
+
+      val newVectors = vectors ++ allFaces.map(f => (f.vector, f.faceId))
+
+      def addNeighborsFor(p: PerFace): (PerFace, Effect) = {
+        val neighbors =
+          vectors
+            .map(e => e._2 -> FaceUtils.sqdist(e._1, p.vector, effectiveThreshold))
+            .filter(_._2 < effectiveThreshold)
+
+        val newFace = p.copy(neighbors = neighbors)
+        def forNeighbor(n: (FaceId, Int)): Effect =
+          Effect.mapHashState(n._1.hash)(_.addNeighbor(n._1.idx, p.faceId, n._2))
+
+        (newFace, Effect.and(neighbors.map(forNeighbor)))
+      }
+
+      val (facesToAdd, effects) = allFaces.map(addNeighborsFor).unzip
+      val addThisHash = Effect.setHashState(hash, PerHash(facesToAdd.toVector))
+
+      copy(vectors = newVectors) -> addThisHash.and(effects)
+    }
+  }
+
+  case class FaceId(
+      hash: Hash,
+      idx:  Int
+  //rectangle: Rectangle
+  )
+  case class PerFace(
+      faceId:    FaceId,
+      vector:    FaceUtils.FeatureVector,
+      neighbors: Vector[(FaceId, Int)]
+  ) {
+    def addNeighbor(f: FaceId, distance: Int): PerFace = copy(neighbors = neighbors :+ (f -> distance))
+  }
+  case class PerHash(
+      faces: Vector[PerFace]
+  ) {
+    def similarFacesTo(idx: Int): Vector[(Hash, Int, Float)] =
+      faces.lift(idx).fold(Vector.empty[(Hash, Int, Float)])(_.neighbors.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
+    def addNeighbor(idx: Int, neighbor: FaceId, dist: Int): PerHash = copy(faces = faces.updated(idx, faces(idx).addNeighbor(neighbor, dist)))
+  }
+  case class State(entries: Map[FaceId, PerFace]) {
+    def handle(hash: Hash, data: FaceData): State = {
+      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx) //, faceInfo.rectangle)
+      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Vector.empty)
+
+      val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
+
+      allFaces.foldLeft(this)(_.inject(_))
+    }
+
+    def inject(perFace: PerFace): State = {
+      val neighbors =
+        entries
+          .values
+          .map(e => e -> FaceUtils.sqdist(e.vector, perFace.vector, effectiveThreshold))
+          .filter(_._2 < effectiveThreshold)
+
+      neighbors.foldLeft(addFace(perFace))((state, f) => state.addNeighbor(f._1.faceId, perFace.faceId, f._2))
+    }
+    def addFace(perFace: PerFace): State = copy(entries = entries + (perFace.faceId -> perFace))
+    def update(face: FaceId, f: PerFace => PerFace): State = copy(entries = entries + (face -> f(entries(face))))
+    def addNeighbor(f1: FaceId, f2: FaceId, distance: Int): State =
+      update(f1, _.addNeighbor(f2, distance))
+        .update(f2, _.addNeighbor(f1, distance))
+  }
+
+  def version: Int = 1
+  def initialGlobalState: Global = Global(Vector.empty)
+  def initialPerHashState(hash: Hash): PerHash = PerHash(Vector.empty)
+  def processEvent(hash: Hash, state: PerHash, event: MetadataEnvelope): Effect =
+    event.entry.kind match {
+      case FaceData => Effect.flatMapGlobalState(_.handle(hash, event.entry.value.asInstanceOf[FaceData]))
+      case _        => Effect.Empty
+    }
+
+  def api(handleWithState: PerHashHandleWithStateFunc[PerHash])(implicit ec: ExecutionContext): SimilarFaces =
+    new SimilarFaces {
+      def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
+        handleWithState.access(hash)(_.similarFacesTo(idx))
+    }
+  import spray.json._
+  import DefaultJsonProtocol._
+  implicit val faceIdFormat: JsonFormat[FaceId] = jsonFormat2(FaceId)
+  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerHash] = {
+    implicit val perFaceFormat: JsonFormat[PerFace] = jsonFormat3(PerFace)
+    jsonFormat1(PerHash)
+  }
+  def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Global] =
+    jsonFormat1(Global.apply _)
+
+  def hasWork(hash: Hash, state: PerHash): Boolean = false
+  def createWork(hash: Hash, state: PerHash, context: ExtractionContext): (PerHash, Vector[WorkEntry]) = (state, Vector.empty)
 }
 
 object FaceUtils {

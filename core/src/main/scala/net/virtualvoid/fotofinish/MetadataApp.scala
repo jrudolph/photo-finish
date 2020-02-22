@@ -78,7 +78,7 @@ object MetadataApp {
       /*val faceApi = new SimilarFaces {
         override def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] = Future.successful(Vector.empty)
       }*/
-      val faceApi = runProcess(new FaceDistanceCollector(0.45f))
+      val faceApi = runProcess(new PerHashFaceDistanceCollector(0.45f).toProcessSqlite)
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()
