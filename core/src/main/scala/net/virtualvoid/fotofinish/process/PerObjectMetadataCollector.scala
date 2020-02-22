@@ -1,7 +1,5 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.Hash
-import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, Metadata, MetadataEntry, MetadataEnvelope }
 import spray.json.JsonFormat
 
@@ -13,24 +11,24 @@ trait MetadataApi {
   def knownObjects(): Future[TreeSet[Id]]
 }
 
-object PerObjectMetadataCollector extends PerHashProcessWithNoGlobalState {
+object PerObjectMetadataCollector extends PerIdProcessWithNoGlobalState {
   type PerKeyState = Metadata
   override type Api = MetadataApi
 
   def version: Int = 2
 
-  def initialPerKeyState(hash: Hash): Metadata = Metadata(Vector.empty)
-  def processHashEvent(hash: Hash, state: Metadata, event: MetadataEnvelope): Effect =
-    Effect.setKeyState(hash, state.copy(entries = state.entries :+ event.entry))
+  def initialPerKeyState(id: Id): Metadata = Metadata(Vector.empty)
+  def processIdEvent(id: Id, state: Metadata, event: MetadataEnvelope): Effect =
+    Effect.setKeyState(id, state.copy(entries = state.entries :+ event.entry))
 
-  def hasWork(hash: Hash, state: Metadata): Boolean = false
-  def createWork(key: Hash, state: Metadata, context: ExtractionContext): (Metadata, Vector[WorkEntry]) = (state, Vector.empty)
-  def api(handleWithState: PerHashHandleWithStateFunc[Metadata])(implicit ec: ExecutionContext): MetadataApi =
+  def hasWork(id: Id, state: Metadata): Boolean = false
+  def createWork(id: Id, state: Metadata, context: ExtractionContext): (Metadata, Vector[WorkEntry]) = (state, Vector.empty)
+  def api(handleWithState: PerIdHandleWithStateFunc[Metadata])(implicit ec: ExecutionContext): MetadataApi =
     new MetadataApi {
       def metadataFor(id: Id): Future[Metadata] =
-        handleWithState.access(id.hash)(identity)
+        handleWithState.access(id)(identity)
       override def knownObjects(): Future[TreeSet[Id]] =
-        handleWithState.accessAllKeys { keys => TreeSet(keys.map(Hashed(_): Id).toVector: _*) }
+        handleWithState.accessAllKeys { keys => TreeSet(keys.toVector: _*) }
     }
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Metadata] = {
     import spray.json.DefaultJsonProtocol._

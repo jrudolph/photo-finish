@@ -5,7 +5,7 @@ import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, MetadataEntry, MetadataEnvelope }
+import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, MetadataEntry, MetadataEnvelope }
 import net.virtualvoid.fotofinish.{ Hash, RepositoryConfig }
 import spray.json.{ JsNull, JsValue, JsonFormat }
 
@@ -23,7 +23,7 @@ trait PerKeyHandleWithStateFunc[K, S] {
 
   def handleStream: Sink[(K, S => (S, Vector[WorkEntry])), Any]
 }
-trait PerHashProcessWithNoGlobalState extends PerHashProcess {
+trait PerIdProcessWithNoGlobalState extends PerIdProcess {
   type GlobalState = AnyRef
   def initialGlobalState: AnyRef = null
   def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[AnyRef] = new JsonFormat[AnyRef] {
@@ -32,20 +32,20 @@ trait PerHashProcessWithNoGlobalState extends PerHashProcess {
   }
 }
 
-trait PerHashProcess extends PerKeyProcess {
-  type Key = Hash
-  type PerHashHandleWithStateFunc[S] = PerKeyHandleWithStateFunc[Hash, S]
+trait PerIdProcess extends PerKeyProcess {
+  type Key = Id
+  type PerIdHandleWithStateFunc[S] = PerKeyHandleWithStateFunc[Id, S]
 
-  def processHashEvent(hash: Hash, state: PerKeyState, event: MetadataEnvelope): Effect
+  def processIdEvent(id: Id, state: PerKeyState, event: MetadataEnvelope): Effect
 
   override def processEvent(event: MetadataEnvelope): Effect = {
-    val hash = event.entry.target.hash
-    Effect.flatMapKeyState(hash) { state =>
-      state -> processHashEvent(hash, state, event)
+    val id = event.entry.target
+    Effect.flatMapKeyState(id) { state =>
+      state -> processIdEvent(id, state, event)
     }
   }
-  override def serializeKey(key: Hash): String = key.toString
-  override def deserializeKey(keyString: String): Hash = Hash.fromPrefixedString(keyString).get
+  override def serializeKey(key: Id): String = key.toString
+  override def deserializeKey(keyString: String): Id = Id.fromString(keyString)
 }
 
 trait PerKeyProcess { pkp =>

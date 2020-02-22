@@ -78,6 +78,8 @@ object Id {
   final case class Hashed(hash: Hash) extends Id {
     def kind: String = hash.hashAlgorithm.name
     def stringRepr: String = hash.asHexString
+
+    override def toString: String = hash.toString
   }
   // final case class ByUUID(uuid: UUID) extends Id
 
@@ -87,12 +89,15 @@ object Id {
       def stringRepr: String = repr
     }
 
+  def fromString(idStr: String): Id =
+    Hashed(Hash.fromPrefixedString(idStr).getOrElse(MetadataJsonProtocol.error(s"Cannot read Id from '$idStr'")))
+
   import DefaultJsonProtocol._
   implicit def hashedFormat: JsonFormat[Hashed] = jsonFormat1(Hashed.apply _)
   implicit def idFormat: JsonFormat[Id] = new JsonFormat[Id] {
     override def write(obj: Id): JsValue = JsString(obj.idString)
     override def read(json: JsValue): Id = json match {
-      case JsString(x) => Hashed(Hash.fromPrefixedString(x).getOrElse(MetadataJsonProtocol.error(s"Cannot read Id from '$x'")))
+      case JsString(x) => Id.fromString(x)
       case x           => MetadataJsonProtocol.error(s"Cannot read Id from $x")
     }
   }

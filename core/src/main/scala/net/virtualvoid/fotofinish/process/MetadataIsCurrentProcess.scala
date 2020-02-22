@@ -1,7 +1,6 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.Hash
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, MetadataEntry, MetadataEnvelope, MetadataExtractor }
+import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, MetadataEntry, MetadataEnvelope, MetadataExtractor }
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
@@ -11,7 +10,7 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProcessWithNoGlobalState {
+class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerIdProcessWithNoGlobalState {
   type PerKeyState = HashState
 
   sealed trait DependencyState {
@@ -90,20 +89,20 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProc
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
   def version: Int = 3
 
-  def initialPerKeyState(hash: Hash): HashState = Initial
-  def processHashEvent(hash: Hash, state: HashState, event: MetadataEnvelope): Effect = Effect.setKeyState(hash, state.handle(event.entry))
+  def initialPerKeyState(id: Id): HashState = Initial
+  def processIdEvent(id: Id, state: HashState, event: MetadataEnvelope): Effect = Effect.setKeyState(id, state.handle(event.entry))
 
-  def hasWork(hash: Hash, state: HashState): Boolean = state.isInstanceOf[Ready]
-  def createWork(key: Hash, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
+  def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
+  def createWork(key: Id, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
     state match {
       case Ready(depValues) =>
         (
           Scheduled(depValues),
-          Vector(WorkEntry.opaque(() => extractor.extract(key, depValues, context).map(Vector(_))(context.executionContext)))
+          Vector(WorkEntry.opaque(() => extractor.extract(key.hash, depValues, context).map(Vector(_))(context.executionContext)))
         )
       case _ => (state, Vector.empty)
     }
-  def api(handleWithState: PerHashHandleWithStateFunc[HashState])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
+  def api(handleWithState: PerIdHandleWithStateFunc[HashState])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
     new MetadataExtractionScheduler {
       def workHistogram: Future[Map[String, Int]] =
         handleWithState.accessAll { states =>
@@ -163,7 +162,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProc
   }
 
   override def isTransient(state: HashState): Boolean = state.isInstanceOf[Scheduled]
-  override def initializeTransientState(key: Hash, state: HashState): HashState =
+  override def initializeTransientState(key: Id, state: HashState): HashState =
     state match {
       case Scheduled(depValues) => Ready(depValues)
       case x                    => x

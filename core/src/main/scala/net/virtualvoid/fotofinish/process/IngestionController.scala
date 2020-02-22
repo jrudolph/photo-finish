@@ -3,6 +3,7 @@ package net.virtualvoid.fotofinish.process
 import akka.http.scaladsl.model.DateTime
 import akka.stream.scaladsl.{ Flow, Sink }
 import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.{ CreationInfo, ExtractionContext, Id, Ingestion, IngestionData, MetadataEntry, MetadataEnvelope }
 import spray.json.JsonFormat
 
@@ -13,33 +14,33 @@ trait Ingestion {
   def ingest(hash: Hash, data: IngestionData): Unit
 }
 
-object IngestionController extends PerHashProcessWithNoGlobalState {
+object IngestionController extends PerIdProcessWithNoGlobalState {
   type PerKeyState = Vector[IngestionData]
   type Api = Ingestion
 
   def version = 1
 
-  def initialPerKeyState(hash: Hash): Vector[IngestionData] = Vector.empty
-  def processHashEvent(hash: Hash, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
+  def initialPerKeyState(id: Id): Vector[IngestionData] = Vector.empty
+  def processIdEvent(id: Id, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
     Effect.setKeyState(
-      hash,
+      id,
       event.entry match {
         case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
         case _                                    => value
       }
     )
 
-  def hasWork(hash: Hash, state: Vector[IngestionData]): Boolean = false
-  def createWork(key: Hash, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
+  def hasWork(id: Id, state: Vector[IngestionData]): Boolean = false
+  def createWork(key: Id, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
 
-  def api(handleWithState: PerHashHandleWithStateFunc[PerKeyState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
+  def api(handleWithState: PerIdHandleWithStateFunc[PerKeyState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
       Flow[(Hash, IngestionData)]
-        .map { case (hash, data) => (hash, handleNewEntry(hash, data)) }
+        .map { case (hash, data) => (Hashed(hash), handleNewEntry(hash, data)) }
         .to(handleWithState.handleStream)
 
     def ingest(hash: Hash, newData: IngestionData): Unit =
-      handleWithState(hash) { state =>
+      handleWithState(Hashed(hash)) { state =>
         val (newState, ses) = handleNewEntry(hash, newData)(state)
         (newState, ses, ())
       }
