@@ -12,7 +12,7 @@ trait MetadataExtractionScheduler {
 }
 
 class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProcessWithNoGlobalState {
-  type PerHashState = HashState
+  type PerKeyState = HashState
 
   sealed trait DependencyState {
     def exists: Boolean
@@ -90,16 +90,16 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProc
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
   def version: Int = 3
 
-  def initialPerHashState(hash: Hash): HashState = Initial
-  def processEvent(hash: Hash, state: HashState, event: MetadataEnvelope): Effect = Effect.setHashState(hash, state.handle(event.entry))
+  def initialPerKeyState(hash: Hash): HashState = Initial
+  def processHashEvent(hash: Hash, state: HashState, event: MetadataEnvelope): Effect = Effect.setKeyState(hash, state.handle(event.entry))
 
   def hasWork(hash: Hash, state: HashState): Boolean = state.isInstanceOf[Ready]
-  def createWork(hash: Hash, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
+  def createWork(key: Hash, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
     state match {
       case Ready(depValues) =>
         (
           Scheduled(depValues),
-          Vector(WorkEntry.opaque(() => extractor.extract(hash, depValues, context).map(Vector(_))(context.executionContext)))
+          Vector(WorkEntry.opaque(() => extractor.extract(key, depValues, context).map(Vector(_))(context.executionContext)))
         )
       case _ => (state, Vector.empty)
     }
@@ -163,7 +163,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerHashProc
   }
 
   override def isTransient(state: HashState): Boolean = state.isInstanceOf[Scheduled]
-  override def initializeTransientState(hash: Hash, state: HashState): HashState =
+  override def initializeTransientState(key: Hash, state: HashState): HashState =
     state match {
       case Scheduled(depValues) => Ready(depValues)
       case x                    => x

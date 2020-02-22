@@ -14,14 +14,14 @@ trait Ingestion {
 }
 
 object IngestionController extends PerHashProcessWithNoGlobalState {
-  type PerHashState = Vector[IngestionData]
+  type PerKeyState = Vector[IngestionData]
   type Api = Ingestion
 
   def version = 1
 
-  def initialPerHashState(hash: Hash): Vector[IngestionData] = Vector.empty
-  def processEvent(hash: Hash, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
-    Effect.setHashState(
+  def initialPerKeyState(hash: Hash): Vector[IngestionData] = Vector.empty
+  def processHashEvent(hash: Hash, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
+    Effect.setKeyState(
       hash,
       event.entry match {
         case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
@@ -30,9 +30,9 @@ object IngestionController extends PerHashProcessWithNoGlobalState {
     )
 
   def hasWork(hash: Hash, state: Vector[IngestionData]): Boolean = false
-  def createWork(hash: Hash, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
+  def createWork(key: Hash, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
 
-  def api(handleWithState: PerHashHandleWithStateFunc[PerHashState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
+  def api(handleWithState: PerHashHandleWithStateFunc[PerKeyState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
       Flow[(Hash, IngestionData)]
         .map { case (hash, data) => (hash, handleNewEntry(hash, data)) }
@@ -44,7 +44,7 @@ object IngestionController extends PerHashProcessWithNoGlobalState {
         (newState, ses, ())
       }
 
-    private def handleNewEntry(hash: Hash, newData: IngestionData): PerHashState => (PerHashState, Vector[WorkEntry]) = state => {
+    private def handleNewEntry(hash: Hash, newData: IngestionData): PerKeyState => (PerKeyState, Vector[WorkEntry]) = state => {
       def matches(data: IngestionData): Boolean =
         newData.originalFullFilePath == data.originalFullFilePath
 
