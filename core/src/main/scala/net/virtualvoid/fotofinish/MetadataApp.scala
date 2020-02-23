@@ -2,8 +2,9 @@ package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata }
+import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata, MetadataKind }
 import net.virtualvoid.fotofinish.process._
+import spray.json.JsonFormat
 
 import scala.collection.immutable.TreeSet
 import scala.concurrent.{ ExecutionContext, Future }
@@ -22,6 +23,8 @@ trait MetadataApp {
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
   def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
   def faceApi: SimilarFaces
+
+  def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S]
 }
 
 object MetadataApp {
@@ -89,5 +92,9 @@ object MetadataApp {
               .headOption
               .filter(_.idString startsWith prefix.idString)
           }
+
+      def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S] =
+        runProcess(new SimpleAggregationProcess[S, kind.T](id, version, kind, initial, f))
+
     }
 }
