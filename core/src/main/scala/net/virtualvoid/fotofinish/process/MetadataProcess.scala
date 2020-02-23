@@ -252,5 +252,5 @@ object MetadataProcess {
 
   // FIXME: join with header
   private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
-    new File(config.metadataDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot")
+    new File(config.snapshotDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot")
 }

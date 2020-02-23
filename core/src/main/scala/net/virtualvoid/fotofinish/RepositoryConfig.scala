@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish
 
-import java.io.File
+import java.io.{ File, FileOutputStream }
 
 import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, SimpleJournalEntry, SimpleKind }
 import net.virtualvoid.fotofinish.metadata._
@@ -8,6 +8,7 @@ import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
 import scala.concurrent.duration.FiniteDuration
+import scala.util.Try
 
 final case class RepositoryConfig(
     storageDir:          File,
@@ -23,6 +24,10 @@ final case class RepositoryConfig(
 ) {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
+
+  val snapshotDir: File = new File(cacheDir, "snapshots")
+  snapshotDir.mkdirs()
+  Try(new FileOutputStream(new File(cacheDir, "CACHEDIR.TAG")).close())
 
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 
