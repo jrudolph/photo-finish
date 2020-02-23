@@ -5,8 +5,8 @@ import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, MetadataEntry, MetadataEnvelope }
-import net.virtualvoid.fotofinish.{ Hash, RepositoryConfig }
+import net.virtualvoid.fotofinish.metadata.{ DeletedMetadata, ExtractionContext, Id, MetadataEntry, MetadataEnvelope }
+import net.virtualvoid.fotofinish.RepositoryConfig
 import spray.json.{ JsNull, JsValue, JsonFormat }
 
 import scala.concurrent.{ ExecutionContext, Future }
@@ -36,14 +36,12 @@ trait PerIdProcess extends PerKeyProcess {
   type Key = Id
   type PerIdHandleWithStateFunc[S] = PerKeyHandleWithStateFunc[Id, S]
 
-  def processIdEvent(id: Id, state: PerKeyState, event: MetadataEnvelope): Effect
+  def processIdEvent(id: Id, event: MetadataEnvelope): Effect
 
-  override def processEvent(event: MetadataEnvelope): Effect = {
-    val id = event.entry.target
-    Effect.flatMapKeyState(id) { state =>
-      state -> processIdEvent(id, state, event)
-    }
-  }
+  override def processEvent(event: MetadataEnvelope): Effect =
+    if (event.entry.kind == DeletedMetadata) Effect.Empty
+    else processIdEvent(event.entry.target, event)
+
   override def serializeKey(key: Id): String = key.toString
   override def deserializeKey(keyString: String): Id = Id.fromString(keyString)
 }

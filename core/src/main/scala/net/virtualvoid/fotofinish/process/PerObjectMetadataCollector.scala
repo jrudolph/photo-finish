@@ -18,8 +18,8 @@ object PerObjectMetadataCollector extends PerIdProcessWithNoGlobalState {
   def version: Int = 2
 
   def initialPerKeyState(id: Id): Metadata = Metadata(Vector.empty)
-  def processIdEvent(id: Id, state: Metadata, event: MetadataEnvelope): Effect =
-    Effect.setKeyState(id, state.copy(entries = state.entries :+ event.entry))
+  def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
+    Effect.mapKeyState(id)(state => state.copy(entries = state.entries :+ event.entry))
 
   def hasWork(id: Id, state: Metadata): Boolean = false
   def createWork(id: Id, state: Metadata, context: ExtractionContext): (Metadata, Vector[WorkEntry]) = (state, Vector.empty)

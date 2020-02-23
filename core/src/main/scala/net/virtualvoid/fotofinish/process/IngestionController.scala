@@ -21,14 +21,13 @@ object IngestionController extends PerIdProcessWithNoGlobalState {
   def version = 1
 
   def initialPerKeyState(id: Id): Vector[IngestionData] = Vector.empty
-  def processIdEvent(id: Id, value: Vector[IngestionData], event: MetadataEnvelope): Effect =
-    Effect.setKeyState(
-      id,
+  def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
+    Effect.mapKeyState(id) { value =>
       event.entry match {
         case entry if entry.kind == IngestionData => value :+ entry.value.asInstanceOf[IngestionData]
         case _                                    => value
       }
-    )
+    }
 
   def hasWork(id: Id, state: Vector[IngestionData]): Boolean = false
   def createWork(key: Id, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
