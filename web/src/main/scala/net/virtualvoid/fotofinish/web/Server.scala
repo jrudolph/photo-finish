@@ -84,7 +84,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
                         meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
                           HttpEntity(
                             MediaTypes.`image/jpeg`,
-                            ImageTools.crop(face.rectangle)(fileInfo.repoFile))
+                            ImageTools.cropJpegTran(face.rectangle)(fileInfo.repoFile))
                         }
                       }
                     },

@@ -1,15 +1,12 @@
 package net.virtualvoid.fotofinish.util
 
 import java.awt.geom.AffineTransform
-import java.awt.image.AffineTransformOp
-import java.awt.image.BufferedImage
-import java.io.ByteArrayOutputStream
-import java.io.File
+import java.awt.image.{ AffineTransformOp, BufferedImage }
+import java.io.{ ByteArrayOutputStream, File }
 
 import akka.util.ByteString
 import javax.imageio.ImageIO
-import net.virtualvoid.fotofinish.metadata.Orientation
-import net.virtualvoid.fotofinish.metadata.Rectangle
+import net.virtualvoid.fotofinish.metadata.{ Orientation, Rectangle }
 
 import scala.util.control.NonFatal
 
@@ -29,6 +26,11 @@ object ImageTools {
       case NonFatal(ex) =>
         throw new IllegalArgumentException(s"Crop rectangle: $rectangle image width: ${image.getWidth} height: ${image.getHeight} croppedX: $croppedX croppedY: $croppedY croppedWidth: $croppedWidth croppedHeight: $croppedHeight", ex)
     }
+  }
+  def cropJpegTran(rectangle: Rectangle): ImageTransformation = {
+    import rectangle._
+    withCmd(fileName => s"jpegtran -crop ${width}x$height+$left+$top $fileName")
+      .recoverWith(_ => crop(rectangle))
   }
 
   def correctOrientation(orientation: Orientation): ImageTransformation = transformJpeg { image =>
@@ -67,5 +69,22 @@ object ImageTools {
     ImageIO.write(f(image), "jpeg", baos)
 
     ByteString(baos.toByteArray)
+  }
+  def withCmd(cmd: String => String): ImageTransformation = f => {
+    import sys.process._
+    val baos = new ByteArrayOutputStream()
+    val theCmd = cmd(f.getAbsolutePath)
+    val res = (theCmd #> baos).!
+    if (res != 0) throw new RuntimeException(s"Executing [$theCmd] returned error code $res")
+    else ByteString(baos.toByteArray)
+  }
+
+  implicit class WithRecovery(val t: ImageTransformation) extends AnyVal {
+    def recoverWith(r: Throwable => ImageTransformation): ImageTransformation =
+      file =>
+        try t(file)
+        catch {
+          case NonFatal(ex) => r(ex)(file)
+        }
   }
 }
