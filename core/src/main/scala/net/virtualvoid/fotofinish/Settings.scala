@@ -13,9 +13,12 @@ object Settings {
   val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
   val meta = new File("/home/johannes/git/self/photo-finish/tmprepo/metadata")
   val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")
+  //val cacheDir = new File(meta, "cache")
+  val cacheDir = new File("/tmp/cache")
 
   repo.mkdirs()
   meta.mkdirs()
+  cacheDir.mkdirs()
 
   val knownMetadataKinds = Set[MetadataKind](
     IngestionData,
@@ -41,6 +44,7 @@ object Settings {
       repo,
       meta,
       linkDir,
+      cacheDir,
       HashAlgorithm.Sha512T160,
       knownMetadataKinds,
       autoExtractors,

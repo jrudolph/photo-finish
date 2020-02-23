@@ -13,6 +13,7 @@ final case class RepositoryConfig(
     storageDir:          File,
     metadataDir:         File,
     linkRootDir:         File,
+    cacheDir:            File,
     hashAlgorithm:       HashAlgorithm,
     knownMetadataKinds:  Set[MetadataKind],
     autoExtractors:      Set[MetadataExtractor],

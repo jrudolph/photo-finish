@@ -1,13 +1,16 @@
 package net.virtualvoid.fotofinish
 package web
 
+import java.io.File
+
+import akka.Done
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.HttpEntity
-import akka.http.scaladsl.model.MediaTypes
-import akka.http.scaladsl.model.StatusCodes
-import akka.http.scaladsl.model.Uri
-import akka.http.scaladsl.server.{ ExceptionHandler, PathMatcher, PathMatcher1, Route }
+import akka.http.scaladsl.model.{ ContentType, HttpEntity, MediaTypes, StatusCodes, Uri }
+import akka.http.scaladsl.server.{ Directive0, ExceptionHandler, PathMatcher, PathMatcher1, Route }
+import akka.stream.IOResult
+import akka.stream.scaladsl.{ FileIO, Flow, Keep }
+import akka.util.ByteString
 import play.twirl.api.Html
 import util.ImageTools
 import util.DateTimeExtra._
@@ -16,6 +19,7 @@ import metadata._
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 
 import scala.concurrent.Future
+import scala.util.Success
 import scala.util.control.NonFatal
 
 object Server extends App {
@@ -52,6 +56,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
       )
     }
 
+  lazy val faceCache = cache("faces", MediaTypes.`image/jpeg`.toContentType)
   lazy val images: Route =
     concat(
       pathPrefix(app.config.hashAlgorithm.name) {
@@ -80,11 +85,13 @@ private[web] class ServerRoutes(app: MetadataApp) {
                 pathPrefix("face" / IntNumber) { i =>
                   concat(
                     pathEndOrSingleSlash {
-                      complete {
-                        meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
-                          HttpEntity(
-                            MediaTypes.`image/jpeg`,
-                            ImageTools.cropJpegTran(face.rectangle)(fileInfo.repoFile))
+                      faceCache(s"${fileInfo.hash.asHexString.take(2)}/${fileInfo.hash.asHexString.drop(2)}.$i.jpeg") {
+                        complete {
+                          meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
+                            HttpEntity(
+                              MediaTypes.`image/jpeg`,
+                              ImageTools.cropJpegTran(face.rectangle)(fileInfo.repoFile))
+                          }
                         }
                       }
                     },
@@ -203,6 +210,38 @@ private[web] class ServerRoutes(app: MetadataApp) {
     case NonFatal(ex) =>
       ex.printStackTrace()
       throw ex
+  }
+
+  def cache(subdir: String, contentType: ContentType): String => Directive0 = {
+    val cacheDir = new File(app.config.cacheDir, subdir)
+
+    key => {
+      val cacheFile = new File(cacheDir, key)
+      cacheFile.getParentFile.mkdirs()
+      //println(s"Cache file: $cacheFile, exists: ${cacheFile.exists}")
+      if (cacheFile.exists)
+        complete(HttpEntity(contentType, FileIO.fromPath(cacheFile.toPath)))
+      else {
+        mapResponseEntity { entity =>
+          val tmpFile = new File(cacheFile.getAbsolutePath + ".tmp")
+          entity
+            .transformDataBytes(
+              Flow[ByteString]
+                .alsoToMat(FileIO.toPath(tmpFile.toPath))(Keep.right)
+                .mapMaterializedValue { res =>
+                  res.onComplete {
+                    case Success(IOResult(count, Success(Done))) =>
+                      //println(s"Cache file [$cacheFile] written successfully ${count} bytes")
+                      tmpFile.renameTo(cacheFile)
+                    case x =>
+                      println(s"Cache file [$cacheFile] could not be written successfully because $x")
+                      tmpFile.delete()
+                  }
+                }
+            )
+        }
+      }
+    }
   }
 }
 
