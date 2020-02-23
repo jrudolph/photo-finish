@@ -68,7 +68,8 @@ object MetadataApp {
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)
       def metadataFor(id: Id): Future[Metadata] = metadataAccess.metadataFor(id)
-      def knownObjects(): Future[TreeSet[Id]] = metadataAccess.knownObjects()
+      private lazy val _knownObjects = metadataAccess.knownObjects() // FIXME: should we cache it only once? Or reload regularly?
+      def knownObjects(): Future[TreeSet[Id]] = _knownObjects
       def extractorStatus(): Future[Seq[(String, Map[String, Int])]] =
         Future.traverse(metadataStatuses) { case (extractor, a) => a.workHistogram.map(histo => extractor.kind -> histo) }
 
