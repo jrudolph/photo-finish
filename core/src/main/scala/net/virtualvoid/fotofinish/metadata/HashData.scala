@@ -24,7 +24,7 @@ object HashDataExtractor {
   )
 
   val instance =
-    MetadataExtractor("net.virtualvoid.fotofinish.metadata.HashDataExtractor", 1, HashData) { (hash, ctx) =>
+    MetadataExtractor.dep1("net.virtualvoid.fotofinish.metadata.HashDataExtractor", 1, HashData, IngestionData) { (hash, _, ctx) =>
       ctx.accessData(hash) { file =>
         Future {
           val mds = HashTypes.map(MessageDigest.getInstance)
