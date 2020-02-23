@@ -28,6 +28,7 @@ object Settings {
     FaceData,
     HashData,
     FFProbeData,
+    DeletedMetadata,
   )
 
   val autoExtractors: Set[MetadataExtractor] = Set(
@@ -39,6 +40,23 @@ object Settings {
   //FaceDataExtractor.instance,
   )
 
+  def removeLongHashEntries(entry: MetadataEntry): MetadataEntry =
+    entry.target match {
+      case Hashed(Hash(alg, _)) if alg != HashAlgorithm.Sha512T160 =>
+        MetadataEntry(
+          entry.target,
+          Vector.empty,
+          DeletedMetadata,
+          CreationInfo(
+            DateTime.now,
+            inferred = true,
+            Deleted
+          ),
+          DeletedMetadata(s"By now unsupported hash algorithm ${alg.name}", SimpleKind(entry.kind.kind, entry.kind.version), filteredOut = true)
+        )
+      case _ => entry
+    }
+
   val config =
     RepositoryConfig(
       repo,
@@ -47,6 +65,7 @@ object Settings {
       cacheDir,
       HashAlgorithm.Sha512T160,
       knownMetadataKinds,
+      removeLongHashEntries,
       autoExtractors,
       8,
       30.seconds,

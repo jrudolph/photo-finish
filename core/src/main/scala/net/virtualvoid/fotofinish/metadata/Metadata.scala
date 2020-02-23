@@ -39,6 +39,7 @@ case class Extractor(
     version: Int
 // machineId: String
 ) extends Creator
+case object Deleted extends Creator
 
 object Creator {
   import DefaultJsonProtocol._
@@ -47,11 +48,13 @@ object Creator {
   implicit val creatorFormat: JsonFormat[Creator] = new JsonFormat[Creator] {
     override def read(json: JsValue): Creator = json.asJsObject.field("type") match {
       case JsString("Ingestion") => Ingestion
+      case JsString("Deleted")   => Ingestion
       case JsString("Extractor") => json.convertTo[Extractor]
       case x                     => MetadataJsonProtocol.error(s"Cannot read Creator from $x")
     }
     override def write(obj: Creator): JsValue = obj match {
       case Ingestion    => JsObject("type" -> JsString("Ingestion"))
+      case Deleted      => JsObject("type" -> JsString("Deleted"))
       case e: Extractor => e.toJson + ("type" -> JsString("Extractor"))
     }
   }

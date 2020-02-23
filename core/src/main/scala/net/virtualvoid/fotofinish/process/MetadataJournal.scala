@@ -126,6 +126,13 @@ object MetadataJournal {
         existingEntriesStartingWith(fromSeqNr)
           .concat(liveSource.map(Metadata))
           .concat(Source.single(ShuttingDown))
+          .map {
+            case orig @ Metadata(env) =>
+              val newEntry = config.metadataMapper(env.entry)
+              if (env.entry != newEntry) Metadata(MetadataEnvelope(env.seqNr, newEntry))
+              else orig
+            case x => x
+          }
       override def shutdown(): Unit = killSwitch.shutdown()
     }
   }

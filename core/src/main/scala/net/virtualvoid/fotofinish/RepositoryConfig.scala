@@ -17,6 +17,7 @@ final case class RepositoryConfig(
     cacheDir:            File,
     hashAlgorithm:       HashAlgorithm,
     knownMetadataKinds:  Set[MetadataKind],
+    metadataMapper:      MetadataEntry => MetadataEntry,
     autoExtractors:      Set[MetadataExtractor],
     executorParallelism: Int,
     snapshotInterval:    FiniteDuration,
