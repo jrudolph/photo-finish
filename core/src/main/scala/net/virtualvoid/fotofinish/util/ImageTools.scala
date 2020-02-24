@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish.util
 
 import java.awt.geom.AffineTransform
 import java.awt.image.{ AffineTransformOp, BufferedImage }
-import java.io.{ ByteArrayOutputStream, File }
+import java.io.{ ByteArrayOutputStream, File, FileOutputStream }
 
 import akka.util.ByteString
 import javax.imageio.ImageIO
@@ -27,11 +27,46 @@ object ImageTools {
         throw new IllegalArgumentException(s"Crop rectangle: $rectangle image width: ${image.getWidth} height: ${image.getHeight} croppedX: $croppedX croppedY: $croppedY croppedWidth: $croppedWidth croppedHeight: $croppedHeight", ex)
     }
   }
-  def cropJpegTran(rectangle: Rectangle): ImageTransformation = {
-    import rectangle._
-    withCmd(fileName => s"jpegtran -crop ${width}x$height+$left+$top $fileName")
-      .recoverWith(_ => crop(rectangle))
+
+  trait JpegTranTransformation {
+    def withOrientationCorrection(orientation: Orientation): JpegTranTransformation
+    def withOrientationCorrection(orientation: Option[Orientation]): JpegTranTransformation
+    def withCrop(rectangle: Rectangle): JpegTranTransformation
+    def build(): ImageTransformation
   }
+  object JpegTranTransformation {
+    def apply(): JpegTranTransformation = Impl(None, None)
+
+    private case class Impl(
+        crop:               Option[Rectangle],
+        correctOrientation: Option[Orientation]) extends JpegTranTransformation {
+      override def withOrientationCorrection(orientation: Orientation): JpegTranTransformation =
+        copy(correctOrientation = Some(orientation))
+      override def withOrientationCorrection(orientation: Option[Orientation]): JpegTranTransformation =
+        copy(correctOrientation = orientation)
+
+      override def withCrop(rectangle: Rectangle): JpegTranTransformation =
+        copy(crop = Some(rectangle))
+      override def build(): ImageTransformation = {
+        val c = crop.fold("") { rect =>
+          import rect._
+          s"-crop ${width}x$height+$left+$top"
+        }
+        val correctFactor = correctOrientation.fold(Option.empty[Int]) {
+          case Orientation.Normal       => None
+          case Orientation.Clockwise90  => Some(270)
+          case Orientation.Clockwise180 => Some(180)
+          case Orientation.Clockwise270 => Some(90)
+        }
+        val rotate = correctFactor.fold("")(i => s"-rotate $i")
+        withCmd(fileName => s"jpegtran $c $rotate $fileName")
+      }
+    }
+  }
+
+  def cropJpegTran(rectangle: Rectangle): ImageTransformation =
+    JpegTranTransformation().withCrop(rectangle).build()
+      .recoverWith(_ => crop(rectangle))
 
   def correctOrientation(orientation: Orientation): ImageTransformation = transformJpeg { image =>
     val width = image.getWidth
@@ -61,6 +96,8 @@ object ImageTools {
     op.filter(image, destImage)
     destImage
   }
+  def correctOrientationJpegTran(orientation: Orientation): ImageTransformation =
+    JpegTranTransformation().withOrientationCorrection(orientation).build()
 
   def transformJpeg(f: BufferedImage => BufferedImage): File => ByteString = { fileName =>
     val image = ImageIO.read(fileName)
@@ -86,5 +123,15 @@ object ImageTools {
         catch {
           case NonFatal(ex) => r(ex)(file)
         }
+    def and(next: ImageTransformation): ImageTransformation = { file =>
+      val res = t(file)
+      val tmpFile = File.createTempFile("trans", "tmp")
+      try {
+        val fos = new FileOutputStream(tmpFile)
+        fos.write(res.toArray)
+        fos.close()
+        next(tmpFile)
+      } finally tmpFile.delete()
+    }
   }
 }
