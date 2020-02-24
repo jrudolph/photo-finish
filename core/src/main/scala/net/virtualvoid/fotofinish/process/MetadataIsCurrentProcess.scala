@@ -1,6 +1,7 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, MetadataEntry, MetadataEnvelope, MetadataExtractor }
+import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Extractor, Id, MetadataEntry, MetadataEnvelope, MetadataExtractor }
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
@@ -10,7 +11,7 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerIdProcessWithNoGlobalState {
+class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdProcessWithNoGlobalState {
   type PerKeyState = HashState
 
   sealed trait DependencyState {
@@ -26,62 +27,82 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerIdProces
     def get: MetadataEntry = value
   }
 
+  val ExtractorId = extractor.kind
+  val ExtractorVersion = extractor.version
   sealed trait HashState extends Product {
     def handle(entry: MetadataEntry): HashState
-  }
-  case class CollectingDependencies(dependencyState: Vector[DependencyState]) extends HashState {
-    def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else {
-        val newL =
-          dependencyState.map {
-            case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
-            case x => x // FIXME: handle dependency changes
-          }
 
-        if (newL forall (_.exists))
-          extractor.precondition(entry.target.hash, newL.map(_.get)) match {
-            case None        => Ready(newL.map(_.get))
-            case Some(cause) => PreConditionNotMet(cause)
+    def dependencyState: Vector[DependencyState]
+
+    def handleEntry(entry: MetadataEntry): HashState =
+      if (entry.kind.kind == extractor.metadataKind.kind)
+        if (dependencyState.forall(_.exists))
+          handleUpgrade(entry.cast(extractor.metadataKind), dependencyState.map(_.get))
+        else
+          CollectingDependencies(dependencyState, Some(entry.cast(extractor.metadataKind)))
+      else
+        handle(entry)
+
+    def handleUpgrade(entry: MetadataEntry.Aux[extractor.EntryT], deps: Vector[MetadataEntry]): HashState =
+      entry.creation.creator match {
+        case Extractor(ExtractorId, ExtractorVersion) => Calculated(ExtractorVersion, deps)
+        case _ =>
+          extractor.upgradeExisting(entry, deps) match {
+            case MetadataExtractor.Keep => Calculated(ExtractorVersion, deps)
+            //case MetadataExtractor.PublishUpgraded(newEntry) => ??? // FIXME: create new state that can create a simple workitem to publish new entry
+            case MetadataExtractor.RerunExtractor =>
+              handleReady(entry.target.hash, deps)
           }
-        else CollectingDependencies(newL)
       }
+    def handleReady(hash: Hash, deps: Vector[MetadataEntry]): HashState =
+      extractor.precondition(hash, deps) match {
+        case None        => Ready(deps)
+        case Some(cause) => PreConditionNotMet(cause, deps)
+      }
+  }
+  case class CollectingDependencies(dependencyState: Vector[DependencyState], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]) extends HashState {
+    def handle(entry: MetadataEntry): HashState = {
+      val newL =
+        dependencyState.map {
+          case Missing(k, v) if k == entry.kind.kind && v == entry.kind.version => Existing(entry)
+          case x => x // FIXME: handle dependency changes
+        }
 
-    def hasAllDeps: Boolean = dependencyState.forall(_.exists)
+      if (newL forall (_.exists)) {
+        val deps = newL.map(_.get)
+        upgradeExisting match {
+          case Some(existing) => handleUpgrade(existing, deps)
+          case None           => handleReady(entry.target.hash, deps)
+        }
+      } else CollectingDependencies(newL, upgradeExisting)
+    }
+
+    override def productPrefix: String = if (upgradeExisting.isDefined) "CollectingDependenciesForUpgrade" else super.productPrefix
   }
-  private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)))
-  case class Ready(dependencyState: Vector[MetadataEntry]) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else this
+  private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)), None)
+  case class Ready(dependencies: Vector[MetadataEntry]) extends HashState {
+    override def handle(entry: MetadataEntry): HashState = this
+
+    override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
-  case class Scheduled(dependencyState: Vector[MetadataEntry]) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(entry.kind.version)
-      else this
+  case class Scheduled(dependencies: Vector[MetadataEntry]) extends HashState {
+    override def handle(entry: MetadataEntry): HashState = this
+    override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
-  case class Calculated(version: Int) extends HashState {
-    override def handle(entry: MetadataEntry): HashState =
-      if (entry.kind.kind == extractor.metadataKind.kind)
-        if (entry.kind.version == extractor.metadataKind.version) LatestVersion
-        else Calculated(version max entry.kind.version)
-      else this
-    // FIXME: handle dependency changes
+  case class Calculated(extractorVersion: Int, dependencies: Vector[MetadataEntry]) extends HashState {
+    override def handle(entry: MetadataEntry): HashState = this
+    // FIXME: handle dependency changes, hard to to? We don't keep track persistently what the dependencies were
+
+    override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
-  private val LatestVersion = Calculated(extractor.metadataKind.version)
-  case class PreConditionNotMet(cause: String) extends HashState {
+  case class PreConditionNotMet(cause: String, dependencies: Vector[MetadataEntry]) extends HashState {
     override def handle(entry: MetadataEntry): HashState = {
       require(
         !(entry.kind.kind == extractor.metadataKind.kind && entry.kind.version == extractor.metadataKind.version),
         s"Unexpected metadata entry found where previously precondition was not met because of [$cause]")
       this
     }
+    override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
 
   type Api = MetadataExtractionScheduler
@@ -91,7 +112,7 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerIdProces
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
-    Effect.mapKeyState(id)(_.handle(event.entry))
+    Effect.mapKeyState(id)(_.handleEntry(event.entry))
 
   def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
   def createWork(key: Id, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
@@ -134,11 +155,11 @@ class MetadataIsCurrentProcess(extractor: MetadataExtractor) extends PerIdProces
       }
     }
 
-    implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat1(CollectingDependencies.apply)
+    implicit def collectingFormat: JsonFormat[CollectingDependencies] = jsonFormat2(CollectingDependencies.apply)
     implicit def readyFormat: JsonFormat[Ready] = jsonFormat1(Ready.apply)
     implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
-    implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat1(Calculated.apply)
-    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat1(PreConditionNotMet.apply)
+    implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat2(Calculated.apply)
+    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat2(PreConditionNotMet.apply)
     implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
       import net.virtualvoid.fotofinish.util.JsonExtra._
       override def read(json: JsValue): HashState =

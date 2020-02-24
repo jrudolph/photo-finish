@@ -118,6 +118,10 @@ trait MetadataEntry {
   def kind: MetadataKind.Aux[T]
   def creation: CreationInfo
   def value: T
+
+  def cast[U](candidateKind: MetadataKind.Aux[U]): MetadataEntry.Aux[U] =
+    if (kind == candidateKind) this.asInstanceOf[MetadataEntry.Aux[U]]
+    else throw new RuntimeException(s"Entry of kind $kind cannot be cast to $candidateKind")
 }
 object MetadataEntry {
   type Aux[_T] = MetadataEntry { type T = _T }
@@ -140,6 +144,8 @@ object MetadataEntry {
   ) extends MetadataEntry {
     type T = _T
   }
+
+  implicit def entryAuxFormat[T](implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Aux[T]] = entryFormat.asInstanceOf[JsonFormat[Aux[T]]]
 }
 
 trait MetadataEnvelope {
@@ -192,6 +198,9 @@ trait MetadataExtractor {
    * FIXME: is there a better type or name for that method?
    */
   def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = None
+
+  def upgradeExisting(existing: MetadataEntry.Aux[EntryT], dependencies: Vector[MetadataEntry]): MetadataExtractor.Upgrade = MetadataExtractor.Keep
+
   protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[EntryT]
 }
 
@@ -233,6 +242,11 @@ object MetadataExtractor {
       override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] =
         p(dependencies(0).value.asInstanceOf[cond1.T])
     }
+
+  sealed trait Upgrade
+  case object Keep extends Upgrade
+  case object RerunExtractor extends Upgrade
+  //case class PublishUpgraded(newEntry: MetadataEntry) extends Upgrade
 }
 
 object MetadataJsonProtocol {
