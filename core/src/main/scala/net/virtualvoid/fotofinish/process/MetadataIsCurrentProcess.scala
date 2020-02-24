@@ -11,8 +11,50 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdProcessWithNoGlobalState {
+class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdProcess {
+  type GlobalState = StateHistogram
   type PerKeyState = HashState
+
+  case class StateHistogram(states: Map[String, Int], scheduled: Set[Id]) {
+    def handle(entry: MetadataEntry): (GlobalState, Effect) = {
+      val id = entry.target
+
+      (
+        this,
+        Effect.exists(id) { exists =>
+          Effect.flatMapKeyState(id) { oldState =>
+            val newState = oldState.handleEntry(entry)
+            (newState, Effect.flatMapGlobalState { global =>
+              val nowScheduled = newState.isInstanceOf[Scheduled] // FIXME: use method instead
+
+              val global1 = if (nowScheduled) global.addScheduled(id) else global.removeScheduled(id)
+              val global2 =
+                if (exists) global1.transition(oldState.productPrefix, newState.productPrefix)
+                else global1.inc(newState.productPrefix, 1)
+              (global2, Effect.Empty)
+            })
+          }
+        }
+      )
+    }
+    def transition(from: String, to: String): StateHistogram =
+      if (from != to) inc(from, -1).inc(to, +1)
+      else this
+    def inc(state: String, by: Int): StateHistogram =
+      copy(states = states.updated(state, states.getOrElse(state, 0) + by))
+    def addScheduled(id: Id): StateHistogram = copy(scheduled = scheduled + id)
+    def removeScheduled(id: Id): StateHistogram = copy(scheduled = scheduled - id)
+
+    def schedule(id: Id): Effect =
+      Effect.flatMapGlobalState { s =>
+        (s.addScheduled(id).transition("Ready", "Scheduled"), Effect.mapKeyState(id) {
+          case Ready(deps) => Scheduled(deps)
+          case _           => throw new IllegalStateException
+        })
+      }
+  }
+
+  def initialGlobalState: StateHistogram = StateHistogram(Map.empty, Set.empty)
 
   sealed trait DependencyState {
     def exists: Boolean
@@ -77,7 +119,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
       } else CollectingDependencies(newL, upgradeExisting)
     }
 
-    override def productPrefix: String = if (upgradeExisting.isDefined) "CollectingDependenciesForUpgrade" else super.productPrefix
+    override def productPrefix: String = if (upgradeExisting.isDefined) "CollectingDependenciesForUpgrade" else "CollectingDependencies"
   }
   private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)), None)
   case class Ready(dependencies: Vector[MetadataEntry]) extends HashState {
@@ -108,33 +150,29 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 3
+  def version: Int = 5
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
-    Effect.mapKeyState(id)(_.handleEntry(event.entry))
+    Effect.flatMapGlobalState(_.handle(event.entry))
 
   override def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
   override def createWork(key: Id, state: HashState, context: ExtractionContext): (Effect, Vector[WorkEntry]) =
     state match {
       case Ready(depValues) =>
         (
-          Scheduled(depValues),
+          Effect.accessFlatMapGlobalState(_.schedule(key)),
           Vector(WorkEntry.opaque(() => extractor.extract(key.hash, depValues, context).map(Vector(_))(context.executionContext)))
         )
-      case _ => (state, Vector.empty)
+      case _ => (Effect.Empty, Vector.empty)
     }
-  def api(handleWithState: PerIdHandleWithStateFunc[HashState])(implicit ec: ExecutionContext): MetadataExtractionScheduler =
+  def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): MetadataExtractionScheduler =
     new MetadataExtractionScheduler {
-      def workHistogram: Future[Map[String, Int]] =
-        handleWithState.accessAll { states =>
-          states
-            .toVector // FIXME: could we somehow support these queries in a better way? (e.g. accumulating numbers directly)
-            .groupBy(_._2.productPrefix)
-            .view.mapValues(_.size).toMap
-        }
+      def workHistogram: Future[Map[String, Int]] = handleWithState.accessGlobal(_.states)
     }
 
+  import spray.json.DefaultJsonProtocol._
+  def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateHistogram] = jsonFormat2(StateHistogram.apply _)
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[HashState] = {
     import JsonExtra._
     import spray.json.DefaultJsonProtocol._
@@ -183,10 +221,14 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
     hashStateFormat
   }
 
-  override def isTransient(state: HashState): Boolean = state.isInstanceOf[Scheduled]
-  override def initializeTransientState(key: Id, state: HashState): HashState =
-    state match {
-      case Scheduled(depValues) => Ready(depValues)
-      case x                    => x
+  override def initializeSnapshot: Effect =
+    Effect.flatMapGlobalState { global =>
+      val sched = global.scheduled
+      val es = sched.map(k => Effect.mapKeyState(k) {
+        case Scheduled(deps) => Ready(deps)
+        case _               => throw new IllegalStateException
+      })
+
+      (global.copy(scheduled = Set.empty), Effect.and(es.toSeq))
     }
 }

@@ -73,7 +73,7 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
       case _        => Effect.Empty
     }
 
-  def api(handleWithState: PerKeyHandleWithStateFunc[FaceId, PerFace])(implicit ec: ExecutionContext): SimilarFaces =
+  def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): SimilarFaces =
     new SimilarFaces {
       def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
         handleWithState.access(FaceId(hash, idx))(_.neighbors.toVector.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })

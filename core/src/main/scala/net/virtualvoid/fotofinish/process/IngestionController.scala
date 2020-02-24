@@ -29,7 +29,7 @@ object IngestionController extends PerIdProcessWithNoGlobalState {
       }
     }
 
-  def api(handleWithState: PerIdHandleWithStateFunc[PerKeyState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
+  def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =
       Flow[(Hash, IngestionData)]
         .map { case (hash, data) => (Hashed(hash), handleNewEntry(hash, data)) }

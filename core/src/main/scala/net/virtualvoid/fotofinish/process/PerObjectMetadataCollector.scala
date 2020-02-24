@@ -21,7 +21,7 @@ object PerObjectMetadataCollector extends PerIdProcessWithNoGlobalState {
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
     Effect.mapKeyState(id)(state => state.copy(entries = state.entries :+ event.entry))
 
-  def api(handleWithState: PerIdHandleWithStateFunc[Metadata])(implicit ec: ExecutionContext): MetadataApi =
+  def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): MetadataApi =
     new MetadataApi {
       def metadataFor(id: Id): Future[Metadata] =
         handleWithState.access(id)(identity)
