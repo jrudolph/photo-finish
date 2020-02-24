@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Id, Metadata, MetadataEntry, MetadataEnvelope }
+import net.virtualvoid.fotofinish.metadata.{ Id, Metadata, MetadataEntry, MetadataEnvelope }
 import spray.json.JsonFormat
 
 import scala.collection.immutable.TreeSet
@@ -21,8 +21,6 @@ object PerObjectMetadataCollector extends PerIdProcessWithNoGlobalState {
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
     Effect.mapKeyState(id)(state => state.copy(entries = state.entries :+ event.entry))
 
-  def hasWork(id: Id, state: Metadata): Boolean = false
-  def createWork(id: Id, state: Metadata, context: ExtractionContext): (Metadata, Vector[WorkEntry]) = (state, Vector.empty)
   def api(handleWithState: PerIdHandleWithStateFunc[Metadata])(implicit ec: ExecutionContext): MetadataApi =
     new MetadataApi {
       def metadataFor(id: Id): Future[Metadata] =

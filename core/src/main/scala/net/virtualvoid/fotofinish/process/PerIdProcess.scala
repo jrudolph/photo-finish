@@ -94,8 +94,8 @@ trait PerKeyProcess { pkp =>
   def initialGlobalState: GlobalState
   def initialPerKeyState(key: Key): PerKeyState
   def processEvent(event: MetadataEnvelope): Effect
-  def hasWork(key: Key, state: PerKeyState): Boolean
-  def createWork(key: Key, state: PerKeyState, context: ExtractionContext): (PerKeyState, Vector[WorkEntry])
+  def hasWork(key: Key, state: PerKeyState): Boolean = false
+  def createWork(key: Key, state: PerKeyState, context: ExtractionContext): (Effect, Vector[WorkEntry]) = (Effect.Empty, Vector.empty)
   def api(handleWithState: PerKeyHandleWithStateFunc[Key, PerKeyState])(implicit ec: ExecutionContext): Api
 
   def isTransient(state: PerKeyState): Boolean = false
@@ -238,9 +238,9 @@ trait PerKeyProcess { pkp =>
           .map(h => h -> state.get(h))
           .map {
             case (key, phs) =>
-              val (newState, work) = pkp.createWork(key, phs, context)
+              val (effect, work) = pkp.createWork(key, phs, context)
               (
-                (s: State) => s.update(key)(_ => newState).removeFromWorkList(key),
+                (s: State) => interpretEffect(s, effect).removeFromWorkList(key),
                 work
               )
           }

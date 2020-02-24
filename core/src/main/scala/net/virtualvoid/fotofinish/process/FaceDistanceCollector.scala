@@ -91,8 +91,6 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   }
   override def serializeKey(key: FaceId): String = s"${key.hash.toString}#${key.idx}"
 
-  def hasWork(key: Key, state: PerFace): Boolean = false
-  def createWork(key: Key, state: PerFace, context: ExtractionContext): (PerFace, Vector[WorkEntry]) = (state, Vector.empty)
 }
 
 object FaceUtils {

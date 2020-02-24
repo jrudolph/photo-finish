@@ -4,7 +4,7 @@ import akka.http.scaladsl.model.DateTime
 import akka.stream.scaladsl.{ Flow, Sink }
 import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
-import net.virtualvoid.fotofinish.metadata.{ CreationInfo, ExtractionContext, Id, Ingestion, IngestionData, MetadataEntry, MetadataEnvelope }
+import net.virtualvoid.fotofinish.metadata.{ CreationInfo, Id, Ingestion, IngestionData, MetadataEntry, MetadataEnvelope }
 import spray.json.JsonFormat
 
 import scala.concurrent.{ ExecutionContext, Future }
@@ -28,9 +28,6 @@ object IngestionController extends PerIdProcessWithNoGlobalState {
         case _                                    => value
       }
     }
-
-  def hasWork(id: Id, state: Vector[IngestionData]): Boolean = false
-  def createWork(key: Id, state: Vector[IngestionData], context: ExtractionContext): (Vector[IngestionData], Vector[WorkEntry]) = (state, Vector.empty)
 
   def api(handleWithState: PerIdHandleWithStateFunc[PerKeyState])(implicit ec: ExecutionContext): Ingestion = new Ingestion {
     def ingestionDataSink: Sink[(Hash, IngestionData), Any] =

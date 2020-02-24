@@ -114,8 +114,8 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
     Effect.mapKeyState(id)(_.handleEntry(event.entry))
 
-  def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
-  def createWork(key: Id, state: HashState, context: ExtractionContext): (HashState, Vector[WorkEntry]) =
+  override def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
+  override def createWork(key: Id, state: HashState, context: ExtractionContext): (Effect, Vector[WorkEntry]) =
     state match {
       case Ready(depValues) =>
         (
