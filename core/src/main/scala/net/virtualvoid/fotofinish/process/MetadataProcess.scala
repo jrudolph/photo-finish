@@ -206,7 +206,7 @@ object MetadataProcess {
 
     val snapshotFile = processSnapshotFile(p, config)
     val snapshot =
-      bench("Deserializing state") { Try(p.loadSnapshot(snapshotFile, config)) }
+      bench("Deserializing state") { Try(p.loadSnapshot(snapshotFile, config).filter(s => s.processId == p.id && s.processVersion == p.version)) }
         .recover {
           case ex =>
             println(s"[${p.id}] Loading snapshot from [$snapshotFile] failed with $ex, replacing snapshot and replaying from scratch")
