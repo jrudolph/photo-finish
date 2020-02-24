@@ -87,10 +87,15 @@ private[web] class ServerRoutes(app: MetadataApp) {
                     pathEndOrSingleSlash {
                       faceCache(s"${fileInfo.hash.asHexString.take(2)}/${fileInfo.hash.asHexString.drop(2)}.$i.jpeg") {
                         complete {
-                          meta.get(MetadataShortcuts.Faces).lift(i).map { face =>
-                            HttpEntity(
-                              MediaTypes.`image/jpeg`,
-                              ImageTools.cropJpegTran(face.rectangle)(fileInfo.repoFile))
+                          val faceData = meta.get[FaceData]
+                          faceData.flatMap { data =>
+                            data.faces.lift(i).map { face =>
+                              import ImageTools.WithRecovery
+                              HttpEntity(
+                                MediaTypes.`image/jpeg`,
+                                ImageTools.cropJpegTran(face.rectangle)
+                                  .and(ImageTools.correctOrientationJpegTran(data.orientation.getOrElse(Orientation.Normal)))(fileInfo.repoFile))
+                            }
                           }
                         }
                       }
