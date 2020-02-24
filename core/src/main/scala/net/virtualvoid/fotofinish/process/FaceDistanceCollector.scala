@@ -22,7 +22,7 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   ) {
     def handle(hash: Hash, data: FaceData): (Global, Effect) = {
       def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx) //, faceInfo.rectangle)
-      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Vector.empty)
+      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Set.empty)
       val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
 
       val newVectors = vectors ++ allFaces.map(f => (f.vector, f.faceId))
@@ -32,8 +32,9 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
           vectors
             .map(e => e._2 -> FaceUtils.sqdist(e._1, p.vector, effectiveThreshold))
             .filter(_._2 < effectiveThreshold)
+            .filter(_._1 != p.faceId)
 
-        val newFace = p.copy(neighbors = neighbors)
+        val newFace = p.copy(neighbors = neighbors.toSet)
         def forNeighbor(n: (FaceId, Int)): Effect =
           Effect.mapKeyState(n._1)(_.addNeighbor(p.faceId, n._2))
 
@@ -56,14 +57,16 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   case class PerFace(
       faceId:    FaceId,
       vector:    FaceUtils.FeatureVector,
-      neighbors: Vector[(FaceId, Int)]
+      neighbors: Set[(FaceId, Int)]
   ) {
-    def addNeighbor(f: FaceId, distance: Int): PerFace = copy(neighbors = neighbors :+ (f -> distance))
+    def addNeighbor(f: FaceId, distance: Int): PerFace =
+      if (f != faceId) copy(neighbors = neighbors + (f -> distance))
+      else this
   }
 
-  def version: Int = 1
+  def version: Int = 4
   def initialGlobalState: Global = Global(Vector.empty)
-  def initialPerKeyState(key: FaceId): PerFace = PerFace(key, Array.empty, Vector.empty)
+  def initialPerKeyState(key: FaceId): PerFace = PerFace(key, Array.empty, Set.empty)
   def processEvent(event: MetadataEnvelope): Effect =
     event.entry.kind match {
       case FaceData => Effect.flatMapGlobalState(_.handle(event.entry.target.hash, event.entry.value.asInstanceOf[FaceData]))
@@ -73,7 +76,7 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   def api(handleWithState: PerKeyHandleWithStateFunc[FaceId, PerFace])(implicit ec: ExecutionContext): SimilarFaces =
     new SimilarFaces {
       def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
-        handleWithState.access(FaceId(hash, idx))(_.neighbors.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
+        handleWithState.access(FaceId(hash, idx))(_.neighbors.toVector.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
     }
   import spray.json._
   import DefaultJsonProtocol._
