@@ -2,6 +2,7 @@ package net.virtualvoid.fotofinish.metadata
 import java.io.File
 
 import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
 import spray.json.JsonFormat
 
 import scala.concurrent.Future
@@ -18,17 +19,45 @@ object FileTypeData extends MetadataKind.Impl[FileTypeData]("net.virtualvoid.fot
 
 object FileTypeDataExtractor {
   def instance: MetadataExtractor =
-    MetadataExtractor.dep1("net.virtualvoid.fotofinish.metadata.FileTypeDataExtractor", 1, FileTypeData, IngestionData) { (hash, ingestionData, ctx) =>
+    new MetadataExtractor {
+      type EntryT = FileTypeData
+      def kind: String = "net.virtualvoid.fotofinish.metadata.FileTypeDataExtractor"
+      def version: Int = 3
+
+      def metadataKind: Aux[FileTypeData] = FileTypeData
+      def dependsOn: Vector[MetadataKind] = Vector(IngestionData)
+
+      protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FileTypeData] =
+        ctx.accessDataSync(hash) { f =>
+          val ingestionData = dependencies(0).cast(IngestionData).value
+          import sys.process._
+          val ext = ingestionData.originalFileName.drop(ingestionData.originalFileName.lastIndexOf('.') + 1)
+
+          val mimeType = s"file -E -b --mime-type ${f.getAbsolutePath}".!!.trim
+          val fileInfo = s"file -E -b ${f.getAbsolutePath}".!!.trim
+
+          FileTypeData(ext, mimeType, fileInfo)
+        }
+
+      override def upgradeExisting(existing: MetadataEntry.Aux[FileTypeData], dependencies: Vector[MetadataEntry]): MetadataExtractor.Upgrade = {
+        val value = existing.value
+        // previous version was broken because it didn't use the `-E` flag so the result might contain just the error message
+        if (value.mimeType.contains("cannot open") || value.fileInfo.contains("cannot open")) MetadataExtractor.RerunExtractor
+        else MetadataExtractor.Keep
+      }
+    }
+
+  /*MetadataExtractor.dep1("net.virtualvoid.fotofinish.metadata.FileTypeDataExtractor", 1, FileTypeData, IngestionData) { (hash, ingestionData, ctx) =>
       ctx.accessDataSync(hash) { f =>
         import sys.process._
         val ext = ingestionData.originalFileName.drop(ingestionData.originalFileName.lastIndexOf('.') + 1)
 
-        val mimeType = s"file -b --mime-type ${f.getAbsolutePath}".!!.trim
-        val fileInfo = s"file -b ${f.getAbsolutePath}".!!.trim
+        val mimeType = s"file -E -b --mime-type ${f.getAbsolutePath}".!!.trim
+        val fileInfo = s"file -E -b ${f.getAbsolutePath}".!!.trim
 
         FileTypeData(ext, mimeType, fileInfo)
       }
-    }
+    }*/
 }
 
 object ImageDataExtractor {
