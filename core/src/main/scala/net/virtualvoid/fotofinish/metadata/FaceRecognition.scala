@@ -1,11 +1,16 @@
 package net.virtualvoid.fotofinish
 package metadata
 
+import java.io.{ File, FileOutputStream }
+
 import net.virtualvoid.facerecognition.{ Face, FaceRecognitionLib }
+import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
+import net.virtualvoid.fotofinish.util.ImageTools
 import spray.json.JsonFormat
 import spray.json.DefaultJsonProtocol._
 
 import scala.collection.immutable
+import scala.concurrent.Future
 
 object FaceRecognition {
   val MaxFaces = 100
@@ -30,7 +35,7 @@ object FaceRecognition {
       }
 
     val settings = RecognizerSettings(1, numJitters)
-    FaceData(settings, infos.toVector)
+    FaceData(settings, None, infos.toVector)
   }
 }
 
@@ -44,7 +49,7 @@ object Rectangle {
   implicit val rectangleFormat = jsonFormat4(Rectangle.apply _)
 }
 case class FaceInfo(
-    rectangle: Rectangle,
+    rectangle: Rectangle, // bounding rectangle on original image, i.e. not taking orientation into account
     modelData: Array[Float]
 )
 object FaceInfo {
@@ -56,13 +61,14 @@ case class RecognizerSettings(
 )
 case class FaceData(
     recognizerSettings: RecognizerSettings,
+    orientation:        Option[Orientation], // orientation should be same as ExifBaseData.orientation, replicated here to ease rotating image while loading
     faces:              immutable.Seq[FaceInfo]
 )
 object FaceData extends MetadataKind.Impl[FaceData]("net.virtualvoid.fotofinish.metadata.FaceData", 1) {
   implicit val jsonFormat: JsonFormat[FaceData] = {
     implicit val settingsFormat = jsonFormat2(RecognizerSettings)
 
-    jsonFormat2(FaceData.apply _)
+    jsonFormat3(FaceData.apply _)
   }
 }
 
@@ -70,7 +76,82 @@ object FaceDataExtractor {
   val NumJitters = 1
 
   val instance =
-    ImageDataExtractor.fromFileSync("net.virtualvoid.fotofinish.metadata.FaceDataExtractor", 1, FaceData) { file =>
-      FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
+    new MetadataExtractor {
+      type EntryT = FaceData
+      def kind: String = "net.virtualvoid.fotofinish.metadata.FaceDataExtractor"
+      def version: Int = 3
+      def metadataKind: Aux[FaceData] = FaceData
+      def dependsOn: Vector[MetadataKind] = Vector(FileTypeData, ExifBaseData)
+
+      def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FaceData] =
+        ctx.accessDataSync(hash) { file =>
+          val tmpFile = File.createTempFile("rotated", "jpeg")
+          try {
+            val exifBaseData = dependencies(1).value.asInstanceOf[ExifBaseData]
+            val imageWidth = exifBaseData.width.get
+            val imageHeight = exifBaseData.height.get
+            val orientation = exifBaseData.orientation
+            val target =
+              orientation match {
+                case Some(Orientation.Normal) | None => file
+                case Some(o) =>
+                  val rotated = ImageTools.correctOrientationJpegTran(o)(file)
+                  val fos = new FileOutputStream(tmpFile)
+                  fos.write(rotated.toArray)
+                  fos.close()
+                  tmpFile
+              }
+
+            def postProcessInfo(faceInfo: FaceInfo): FaceInfo =
+              orientation match {
+                case Some(Orientation.Normal) | None => faceInfo
+                case Some(o) =>
+                  val rect = faceInfo.rectangle
+                  val newRectangle = o match {
+                    case Orientation.Clockwise90 =>
+                      // 0,0 => width,0
+                      // height,0 => width,height
+                      // 0,width => 0,0
+                      // height, width => 0,height
+                      Rectangle(imageWidth - rect.top - rect.height, rect.left, rect.height, rect.width)
+
+                    case Orientation.Clockwise180 =>
+                      Rectangle(imageWidth - rect.left - rect.width, imageHeight - rect.top - rect.height, rect.width, rect.height)
+                    case Orientation.Clockwise270 =>
+                      // 0,0 => 0,height
+                      // height,0 => 0, 0
+                      // 0,width => width,height
+                      // height, width => width,0
+                      Rectangle(rect.top, imageHeight - rect.left - rect.width, rect.height, rect.width)
+                  }
+
+                  faceInfo.copy(rectangle = newRectangle)
+              }
+
+            val res = FaceRecognition.detectFaces(target.getAbsolutePath, NumJitters)
+            res.copy(orientation = orientation, faces = res.faces.map(postProcessInfo))
+
+          } finally tmpFile.delete()
+        }
+      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = {
+        val mime = dependencies(0).value.asInstanceOf[FileTypeData].mimeType
+        val exif = dependencies(1).value.asInstanceOf[ExifBaseData]
+        if (mime.startsWith("image/"))
+          if (exif.orientation.exists(_ != Orientation.Normal))
+            if (exif.width.isDefined && exif.height.isDefined) None
+            else Some("Cannot fix orientation without width and height")
+          else None
+        else Some(s"Object is not an image but [$mime]")
+      }
+
+      override def upgradeExisting(existing: MetadataEntry.Aux[FaceData], dependencies: Vector[MetadataEntry]): MetadataExtractor.Upgrade = {
+        val orientation = dependencies(1).value.asInstanceOf[ExifBaseData].orientation
+        if (orientation != existing.value.orientation) MetadataExtractor.RerunExtractor
+        else MetadataExtractor.Keep
+      }
     }
+
+  /*ImageDataExtractor.fromFileSync("net.virtualvoid.fotofinish.metadata.FaceDataExtractor", 1, FaceData) { file =>
+    FaceRecognition.detectFaces(file.getAbsolutePath, NumJitters)
+  }*/
 }
