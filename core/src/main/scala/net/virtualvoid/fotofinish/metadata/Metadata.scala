@@ -160,7 +160,7 @@ object MetadataEnvelope {
 trait ExtractionContext {
   implicit def executionContext: ExecutionContext
   def accessData[T](hash: Hash)(f: File => Future[T]): Future[T]
-  def accessDataSync[T](hash: Hash)(f: File => T): Future[T] = accessData(hash)(file => Future.fromTry(Try(f(file))))
+  def accessDataSync[T](hash: Hash)(f: File => T): Future[T] = accessData(hash)(file => Future(f(file)))
 }
 
 trait MetadataExtractor {
