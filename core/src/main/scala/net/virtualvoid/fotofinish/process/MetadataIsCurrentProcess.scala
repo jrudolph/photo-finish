@@ -16,26 +16,24 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   type PerKeyState = HashState
 
   case class StateHistogram(states: Map[String, Int], scheduled: Set[Id]) {
-    def handle(entry: MetadataEntry): (GlobalState, Effect) = {
+    def handle(entry: MetadataEntry): Effect = {
       val id = entry.target
 
-      (
-        this,
-        Effect.exists(id) { exists =>
-          Effect.flatMapKeyState(id) { oldState =>
-            val newState = oldState.handleEntry(entry)
-            (newState, Effect.flatMapGlobalState { global =>
-              val nowScheduled = newState.isInstanceOf[Scheduled] // FIXME: use method instead
+      Effect.exists(id) { exists =>
+        Effect.flatMapKeyState(id) { oldState =>
+          val newState = oldState.handleEntry(entry)
+          (newState, Effect.flatMapGlobalState { global =>
+            val nowScheduled = newState.isInstanceOf[Scheduled] // FIXME: use method instead
 
-              val global1 = if (nowScheduled) global.addScheduled(id) else global.removeScheduled(id)
-              val global2 =
-                if (exists) global1.transition(oldState.productPrefix, newState.productPrefix)
-                else global1.inc(newState.productPrefix, 1)
-              (global2, Effect.Empty)
-            })
-          }
+            val global1 = if (nowScheduled) global.addScheduled(id) else global.removeScheduled(id)
+            val global2 =
+              if (exists) global1.transition(oldState.productPrefix, newState.productPrefix)
+              else global1.inc(newState.productPrefix, 1)
+            (global2, Effect.Empty)
+          })
         }
-      )
+      }
+
     }
     def transition(from: String, to: String): StateHistogram =
       if (from != to) inc(from, -1).inc(to, +1)
@@ -154,7 +152,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
-    Effect.flatMapGlobalState(_.handle(event.entry))
+    Effect.accessFlatMapGlobalState(_.handle(event.entry))
 
   override def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
   override def createWork(key: Id, state: HashState, context: ExtractionContext): (Effect, Vector[WorkEntry]) =
