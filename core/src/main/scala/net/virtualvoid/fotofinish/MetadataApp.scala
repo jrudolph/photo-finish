@@ -1,8 +1,9 @@
 package net.virtualvoid.fotofinish
 
 import akka.actor.ActorSystem
+import akka.http.scaladsl.model.DateTime
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.metadata.{ Id, IngestionData, Metadata, MetadataKind }
+import net.virtualvoid.fotofinish.metadata.{ FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind }
 import net.virtualvoid.fotofinish.process._
 import spray.json.JsonFormat
 
@@ -23,6 +24,8 @@ trait MetadataApp {
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
   def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
   def faceApi: SimilarFaces
+
+  def mostRecentlyFoundFaces(): Future[Seq[(Hash, Int, DateTime)]]
 
   def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S]
 }
@@ -94,7 +97,24 @@ object MetadataApp {
           }
 
       def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S] =
+        aggregationWithEntry(id, version, kind, initial)((state, entry) => f(state, entry.value))
+      def aggregationWithEntry[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, MetadataEntry.Aux[kind.T]) => S): () => Future[S] =
         runProcess(new SimpleAggregationProcess[S, kind.T](id, version, kind, initial, f))
 
+      val mostRecentlyFoundFacesProcess: () => Future[Seq[(Hash, Int, DateTime)]] = {
+        val max = 50
+        type RecentFaceEntry = (Hash, Int, DateTime)
+        import spray.json.DefaultJsonProtocol._
+        import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.dateTimeFormat
+
+        aggregationWithEntry("recently-found-faces", 1, FaceData, Vector.empty[RecentFaceEntry]) { (recent, entry) =>
+          val newFaces = entry.value.faces.indices.map { i =>
+            (entry.target.hash, i, entry.creation.created)
+          }
+          (recent ++ newFaces).sortBy(-_._3.clicks).take(max)
+        }
+      }
+
+      override def mostRecentlyFoundFaces(): Future[Seq[(Hash, Int, DateTime)]] = mostRecentlyFoundFacesProcess()
     }
 }
