@@ -51,7 +51,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
       concat(
         pathPrefix("images")(images),
         pathPrefix("gallery")(gallery),
-        pathPrefix("extractors")(extractors),
+        pathPrefix("views")(views),
         auxiliary,
       )
     }
@@ -157,10 +157,23 @@ private[web] class ServerRoutes(app: MetadataApp) {
       }
     }
 
+  lazy val views =
+    concat(
+      pathPrefix("extractors")(extractors),
+      pathPrefix("recent-faces")(latestFaces),
+    )
+
   lazy val extractors: Route =
     get {
       onSuccess(app.extractorStatus()) { status =>
         complete(ExtractorStatus(status))
+      }
+    }
+
+  lazy val latestFaces: Route =
+    get {
+      onSuccess(app.mostRecentlyFoundFaces()) { faces =>
+        complete(RecentFaces(faces))
       }
     }
 

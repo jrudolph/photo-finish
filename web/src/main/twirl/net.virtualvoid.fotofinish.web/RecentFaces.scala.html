@@ -1,0 +1,10 @@
+@import net.virtualvoid.fotofinish.Hash
+@import akka.http.scaladsl.model.DateTime
+
+@(recentFaces: Seq[(Hash, Int, DateTime)])
+
+<div>
+    @for((hash, idx, time) <- recentFaces) {
+    <a href="/images/sha-512-t160/@{hash.asHexString}/face/@idx/info/"><img src="/images/sha-512-t160/@{hash.asHexString}/face/@idx" width="150px"/></a>
+    }
+</div>
