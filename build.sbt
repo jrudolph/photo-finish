@@ -42,9 +42,14 @@ lazy val web = project
         (sourceDirectory in TwirlKeys.compileTemplates).value,
         "*.scala.*",
         (excludeFilter in Global).value
-      )
+      ),
+
+    buildInfoPackage := "net.virtualvoid.fotofinish.web",
+    buildInfoKeys ++= Seq(
+      "longProjectName" -> "Photo Finish"
+    ),
   )
-  .enablePlugins(SbtTwirl)
+  .enablePlugins(SbtTwirl, BuildInfoPlugin)
   .dependsOn(core)
 
 lazy val docs = project
