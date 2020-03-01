@@ -5,6 +5,7 @@ import java.io.FileInputStream
 import java.security.MessageDigest
 
 import akka.util.ByteString
+import net.virtualvoid.fotofinish.Hash.chars
 
 import scala.annotation.tailrec
 import scala.util.Try
@@ -78,7 +79,20 @@ object HashAlgorithm {
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
   lazy val asHexString: String = data.map(_ formatted "%02x").mkString
 
-  override def toString: String = s"${hashAlgorithm.name}:$asHexString"
+  override def toString: String = {
+    val sb = new StringBuilder(100)
+    sb ++= hashAlgorithm.name
+    sb += ':'
+    val bs = data.toArray
+    var i = 0
+    while (i < bs.length) {
+      val b = bs(i)
+      sb += chars((b & 0xf0) >> 4)
+      sb += chars(b & 0x0f)
+      i += 1
+    }
+    sb.result()
+  }
 }
 object Hash {
   def fromPrefixedString(prefixed: String): Option[Hash] = Try {
@@ -118,12 +132,14 @@ object Hash {
   }
   implicit val hashOrdering: Ordering[Hash] = Ordering.by[Hash, ByteString](_.data)
 
+  val chars = "0123456789abcdef"
+
   import spray.json._
   implicit val hashFormat = new JsonFormat[Hash] {
     override def read(json: JsValue): Hash = json match {
       case JsString(data) => Hash.fromPrefixedString(data).getOrElse(throw DeserializationException(s"Prefixed hash string could not be read [$data]"))
       case x              => throw DeserializationException(s"Hash cannot be read from [$x]")
     }
-    override def write(obj: Hash): JsValue = JsString(obj.toString)
+    override def write(hash: Hash): JsValue = JsString(hash.toString)
   }
 }
