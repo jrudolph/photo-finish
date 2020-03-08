@@ -27,6 +27,9 @@ trait MetadataApp {
 
   def mostRecentlyFoundFaces(): Future[Seq[(Hash, Int, DateTime)]]
 
+  def byYearMonth: HierarchyAccess[String]
+  def byOriginalFileName: HierarchyAccess[String]
+
   def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S]
 }
 

@@ -1,6 +1,5 @@
 package net.virtualvoid.fotofinish.process
 
-import akka.http.scaladsl.model.DateTime
 import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata._
 import spray.json.{ DefaultJsonProtocol, JsonFormat }
@@ -10,6 +9,8 @@ import scala.concurrent.{ ExecutionContext, Future }
 sealed trait Node[T] {
   def name: T
   def fullPath: Vector[T]
+  def numEntries: Int
+  def numChildren: Int
   def entries: Future[Map[T, Vector[Hash]]]
   def children: Future[Map[T, Node[T]]]
 }
@@ -21,6 +22,7 @@ trait HierarchyAccess[T] {
 
 trait Hierarchy[T] {
   type M
+  def version: Int
   def metadataKind: MetadataKind.Aux[M]
   def extract(hash: Hash, entry: M): Vector[T]
   def rootName: T
@@ -30,6 +32,7 @@ trait Hierarchy[T] {
 
 object OriginalFileNameHierarchy extends Hierarchy[String] {
   type M = IngestionData
+  def version: Int = 1
   def metadataKind: MetadataKind.Aux[IngestionData] = IngestionData
 
   def extract(hash: Hash, entry: IngestionData): Vector[String] = entry.originalFullFilePath.split("/").toVector.drop(1)
@@ -38,21 +41,24 @@ object OriginalFileNameHierarchy extends Hierarchy[String] {
 }
 object YearMonthHierarchy extends Hierarchy[String] {
   type M = ExifBaseData
+  def version: Int = 4
   def metadataKind: MetadataKind.Aux[ExifBaseData] = ExifBaseData
 
-  def extract(hash: Hash, entry: ExifBaseData): Vector[String] = {
-    val dateTime = entry.dateTaken.getOrElse(DateTime(0L))
-    Vector(dateTime.year.toString, dateTime.month.toString, s"${hash.asHexString}.jpg")
-  }
+  def extract(hash: Hash, entry: ExifBaseData): Vector[String] =
+    entry.dateTaken match {
+      case Some(dateTime) => Vector(dateTime.year.toString, dateTime.month.toString, dateTime.toString)
+      case None           => Vector("unknown", hash.asHexString)
+    }
   def rootName: String = ""
   def tFormat: JsonFormat[String] = DefaultJsonProtocol.StringJsonFormat
 }
 
 class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
-  override type S = State
-  override type Api = HierarchyAccess[T]
+  type S = State
+  type Api = HierarchyAccess[T]
 
   override def id: String = super.id + "." + hierarchy.getClass.getName
+  def version: Int = hierarchy.version
 
   case class NodeImpl(fullPath: Vector[T], children: Map[T, NodeImpl], entries: Map[T, Vector[Hash]]) {
     def enter(hash: Hash, remainingPathSegments: Vector[T]): NodeImpl =
@@ -70,6 +76,7 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
     def get(prefix: Vector[T]): Option[NodeImpl] =
       prefix match {
         case head +: tail => children.get(head).flatMap(_.get(tail))
+        case _            => Some(this)
       }
   }
 
@@ -78,7 +85,6 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
       copy(root.enter(hash, hierarchy.extract(hash, data)))
   }
 
-  override def version: Int = 1
   override def initialState: State = State(NodeImpl(Vector.empty, Map.empty, Map.empty))
   override def processEvent(state: State, event: MetadataEnvelope): State =
     if (event.entry.kind == hierarchy.metadataKind) state.handle(event.entry.target.hash, event.entry.value.asInstanceOf[hierarchy.M])
@@ -95,6 +101,9 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
       private def n(handleWithState: HandleWithStateFunc[State])(node: NodeImpl): Node[T] = new Node[T] {
         override def name: T = node.fullPath.lastOption.getOrElse(hierarchy.rootName)
         override def fullPath: Vector[T] = node.fullPath
+        override def numEntries: Int = node.entries.size
+        override def numChildren: Int = node.children.size
+
         override def entries: Future[Map[T, Vector[Hash]]] =
           handleWithState.access(_.root.get(fullPath).fold(Map.empty[T, Vector[Hash]])(_.entries))
         override def children: Future[Map[T, Node[T]]] =

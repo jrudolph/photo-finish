@@ -17,6 +17,7 @@ import util.DateTimeExtra._
 import html._
 import metadata._
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
+import net.virtualvoid.fotofinish.process.{ HierarchyAccess, Node }
 
 import scala.concurrent.Future
 import scala.util.Success
@@ -52,6 +53,8 @@ private[web] class ServerRoutes(app: MetadataApp) {
         pathPrefix("images")(images),
         pathPrefix("gallery")(gallery),
         pathPrefix("views")(views),
+        pathPrefix("by-date")(hierarchy(app.byYearMonth)),
+        pathPrefix("by-filename")(hierarchy(app.byOriginalFileName)),
         auxiliary,
       )
     }
@@ -175,6 +178,27 @@ private[web] class ServerRoutes(app: MetadataApp) {
       onSuccess(app.mostRecentlyFoundFaces()) { faces =>
         complete(RecentFaces(faces))
       }
+    }
+
+  def hierarchy(access: HierarchyAccess[String]): Route =
+    (get & redirectToTrailingSlashIfMissing(StatusCodes.Found)) {
+      def forNode(nodeF: Future[Option[Node[String]]]): Route =
+        onSuccess(nodeF) {
+          case Some(node) =>
+            val es = node.entries
+            val ch = node.children
+            (onSuccess(ch) & onSuccess(es)) { (children, entries) =>
+              complete(Hierarchy(node.name, node.fullPath.mkString("/"), entries.toVector.sortBy(_._1), children.map(c => c._1 -> c._2.numEntries).toVector.sorted))
+            }
+          case None => reject
+        }
+
+      concat(
+        pathEndOrSingleSlash(forNode(access.root.map(Some(_)))),
+        path(Segments./) { segments =>
+          forNode(access.byPrefix(segments.toVector))
+        }
+      )
     }
 
   lazy val auxiliary: Route =
