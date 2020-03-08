@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish.util
 
 import java.awt.geom.AffineTransform
-import java.awt.image.{ AffineTransformOp, BufferedImage }
+import java.awt.image.{ AffineTransformOp, BufferedImage, RenderedImage }
 import java.io.{ ByteArrayOutputStream, File, FileOutputStream }
 
 import akka.util.ByteString
@@ -68,7 +68,9 @@ object ImageTools {
     JpegTranTransformation().withCrop(rectangle).build()
       .recoverWith(_ => crop(rectangle))
 
-  def correctOrientation(orientation: Orientation): ImageTransformation = transformJpeg { image =>
+  def correctOrientation(orientation: Orientation): ImageTransformation =
+    transformJpeg(correctOrientation(orientation, _))
+  def correctOrientation(orientation: Orientation, image: BufferedImage): BufferedImage = {
     val width = image.getWidth
     val height = image.getHeight
 
@@ -99,7 +101,7 @@ object ImageTools {
   def correctOrientationJpegTran(orientation: Orientation): ImageTransformation =
     JpegTranTransformation().withOrientationCorrection(orientation).build()
 
-  def transformJpeg(f: BufferedImage => BufferedImage): File => ByteString = { fileName =>
+  def transformJpeg(f: BufferedImage => RenderedImage): ImageTransformation = { fileName =>
     val image = ImageIO.read(fileName)
 
     val baos = new ByteArrayOutputStream()
@@ -107,6 +109,12 @@ object ImageTools {
 
     ByteString(baos.toByteArray)
   }
+
+  def squareThumbnailIM(sideLength: Int, orientation: Orientation): ImageTransformation =
+    withCmd { fileName =>
+      s"convert $fileName -thumbnail ${sideLength}x$sideLength^ -gravity center -extent ${sideLength}x$sideLength -auto-orient -"
+    }
+
   def withCmd(cmd: String => String): ImageTransformation = f => {
     import sys.process._
     val baos = new ByteArrayOutputStream()

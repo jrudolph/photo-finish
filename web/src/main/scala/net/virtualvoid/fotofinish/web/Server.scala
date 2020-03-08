@@ -59,7 +59,8 @@ private[web] class ServerRoutes(app: MetadataApp) {
       )
     }
 
-  lazy val faceCache = cache("faces", MediaTypes.`image/jpeg`.toContentType)
+  lazy val faceCache = hashSuffixCache("faces", MediaTypes.`image/jpeg`.toContentType)
+  lazy val thumbnailCache = hashSuffixCache("thumbnails", MediaTypes.`image/jpeg`.toContentType)
   lazy val images: Route =
     concat(
       pathPrefix(app.config.hashAlgorithm.name) {
@@ -79,8 +80,11 @@ private[web] class ServerRoutes(app: MetadataApp) {
                   }
                 },
                 path("thumbnail") {
-                  complete {
-                    meta.get(MetadataShortcuts.Thumbnail).map { thumbData =>
+                  val thumbnailType = "square150"
+                  thumbnailCache(fileInfo.hash, thumbnailType) {
+                    val thumbData = ImageTools.squareThumbnailIM(150, meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
+
+                    complete {
                       HttpEntity(MediaTypes.`image/jpeg`, thumbData)
                     }
                   }
@@ -88,7 +92,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
                 pathPrefix("face" / IntNumber) { i =>
                   concat(
                     pathEndOrSingleSlash {
-                      faceCache(s"${fileInfo.hash.asHexString.take(2)}/${fileInfo.hash.asHexString.drop(2)}.$i.jpeg") {
+                      faceCache(fileInfo.hash, i.toString) {
                         complete {
                           val faceData = meta.get[FaceData]
                           faceData.flatMap { data =>
@@ -252,6 +256,12 @@ private[web] class ServerRoutes(app: MetadataApp) {
     case NonFatal(ex) =>
       ex.printStackTrace()
       throw ex
+  }
+
+  def hashSuffixCache(subdir: String, contentType: ContentType): (Hash, String) => Directive0 = {
+    val c = cache(subdir, contentType)
+
+    (hash, suffix) => c(s"${hash.asHexString.take(2)}/${hash.asHexString.drop(2)}.$suffix.${contentType.mediaType.fileExtensions.head}")
   }
 
   def cache(subdir: String, contentType: ContentType): String => Directive0 = {
