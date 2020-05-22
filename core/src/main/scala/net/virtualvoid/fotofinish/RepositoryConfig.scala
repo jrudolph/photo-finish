@@ -28,7 +28,15 @@ final case class RepositoryConfig(
 
   val snapshotDir: File = new File(cacheDir, "snapshots")
   snapshotDir.mkdirs()
-  Try(new FileOutputStream(new File(cacheDir, "CACHEDIR.TAG")).close())
+
+  {
+    val cacheTag = new File(cacheDir, "CACHEDIR.TAG")
+    if (!cacheTag.exists()) Try {
+      val fos = new FileOutputStream(cacheTag)
+      fos.write("Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by photo-finish.\n# For information about cache directory tags, see:\n#\thttp://www.brynosaurus.com/cachedir/".getBytes("ASCII"))
+      fos.close()
+    }
+  }
 
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 

@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish
 
-import java.io.{File, FileOutputStream}
+import java.io.File
 
 
 import scala.concurrent.duration._
@@ -19,16 +19,7 @@ object Settings {
 
   repo.mkdirs()
   meta.mkdirs()
-
-  {
-    cacheDir.mkdirs()
-    val cacheTag = new File(cacheDir, "CACHEDIR.TAG")
-    if (!cacheTag.exists()) {
-      val fos = new FileOutputStream(cacheTag)
-      fos.write("Signature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by photo-finish.\n# For information about cache directory tags, see:\n#\thttp://www.brynosaurus.com/cachedir/".getBytes("ASCII"))
-      fos.close()
-    }
-  }
+  cacheDir.mkdirs()
 
   val knownMetadataKinds = Set[MetadataKind](
     IngestionData,
