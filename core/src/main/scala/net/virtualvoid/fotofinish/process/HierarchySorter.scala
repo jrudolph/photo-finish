@@ -41,12 +41,12 @@ object OriginalFileNameHierarchy extends Hierarchy[String] {
 }
 object YearMonthHierarchy extends Hierarchy[String] {
   type M = ExifBaseData
-  def version: Int = 4
+  def version: Int = 5
   def metadataKind: MetadataKind.Aux[ExifBaseData] = ExifBaseData
 
   def extract(hash: Hash, entry: ExifBaseData): Vector[String] =
     entry.dateTaken match {
-      case Some(dateTime) => Vector(dateTime.year.toString, dateTime.month.toString, dateTime.toString)
+      case Some(dateTime) => Vector(dateTime.year.toString, dateTime.month formatted "%02d", dateTime.toString)
       case None           => Vector("unknown", hash.asHexString)
     }
   def rootName: String = ""
