@@ -94,6 +94,11 @@ object MetadataJournal {
         }
       }
 
+    val existingEntriesSimple: Source[StreamEntry, Any] =
+      Source.lazyFutureSource(readAllEntries _)
+        .map[StreamEntry](Metadata)
+        .concat(Source.single(AllObjectsReplayed))
+
     // A persisting source that replays all existing journal entries on and on as long as something listens to it.
     // The idea is similar to IP multicast that multiple subscribers can attach to the already running program and
     // the overhead for providing the data is only paid once for all subscribers.
@@ -101,15 +106,12 @@ object MetadataJournal {
     // time and would eventually get all the information as everyone else (without requiring a dedicated TV for any watcher).
     val existingEntryWheel: Source[StreamEntry, Any] =
       Source
-        .fromGraph(new RepeatSource(
-          Source.lazyFutureSource(readAllEntries _)
-            .map[StreamEntry](Metadata)
-            .concat(Source.single(AllObjectsReplayed))
-        ))
-        .runWith(BroadcastHub.sink(1024))
+        .fromGraph(new RepeatSource(existingEntriesSimple))
+        .runWith(BroadcastHub.sink(2048))
 
     // Attaches to the wheel but only returns the journal entries between the given seqNr and AllObjectsReplayed.
     def existingEntriesStartingWith(fromSeqNr: Long): Source[StreamEntry, Any] =
+      // FIXME: could also use existingEntriesSimple which would create one full journal stream per consumer
       existingEntryWheel
         .via(new TakeFromWheel(fromSeqNr))
 
@@ -169,7 +171,7 @@ object MetadataJournal {
 
       def onPull(): Unit = pull(in)
 
-      val waitForStart = new InHandler {
+      private object WaitForStart extends InHandler {
         var seenSmaller: Boolean = false
         override def onPush(): Unit =
           grab(in) match {
@@ -178,7 +180,7 @@ object MetadataJournal {
 
               if (entry.seqNr == firstSeqNr) {
                 push(out, e)
-                setHandler(in, transferring)
+                setHandler(in, Transferring)
               } else if (seenSmaller && entry.seqNr > firstSeqNr)
                 throw new IllegalStateException(s"Gap in journal before ${entry.seqNr}")
               // else if (!seenSmaller && entry.seqNr > firstSeqNr) // need to wrap first
@@ -196,7 +198,7 @@ object MetadataJournal {
             case x => throw new IllegalStateException(s"Unexpected element $x")
           }
       }
-      val transferring = new InHandler {
+      private object Transferring extends InHandler {
         override def onPush(): Unit = {
           val el = grab(in)
           push(out, el)
@@ -205,7 +207,7 @@ object MetadataJournal {
       }
 
       setHandler(out, this)
-      setHandler(in, waitForStart)
+      setHandler(in, WaitForStart)
     }
   }
 }
