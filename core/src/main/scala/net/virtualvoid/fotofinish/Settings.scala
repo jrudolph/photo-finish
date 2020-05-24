@@ -13,8 +13,6 @@ object Settings {
   val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
   val meta = new File("/home/johannes/git/self/photo-finish/tmprepo/metadata")
   val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")
-  //val cacheDir = new File(meta, "cache")
-  val cacheDir = new File("/tmp/cache")
   val cacheDir = new File(meta, "cache")
 
   repo.mkdirs()
@@ -35,7 +33,7 @@ object Settings {
   val autoExtractors: Set[MetadataExtractor] = Set(
     FileTypeDataExtractor.instance,
     ExifBaseDataExtractor.instance,
-    ThumbnailExtractor.instance,
+    //ThumbnailExtractor.instance, thumbnails are now cached and not metadata
     HashDataExtractor.instance,
     FFProbeDataExtractor.instance,
   //FaceDataExtractor.instance,

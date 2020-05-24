@@ -6,7 +6,7 @@ import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 
 /**
  * A source that infinitely repeats the given source (by rematerializing it when the previous
- * instance was exhausted.
+ * instance was exhausted).
  *
  * Note that the elements can differ between rematerializations depending on the given source.
  */

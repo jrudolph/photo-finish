@@ -68,31 +68,55 @@ object MetadataJournal {
             }.get
         }
 
+    val readEntryFlow: Flow[ByteString, MetadataEnvelope, Any] =
+      Flow[ByteString]
+        .via(Compression.gunzip())
+        .via(Framing.delimiter(ByteString("\n"), 1000000))
+        // batch and async loading
+        .grouped(100) // TODO: make configurable?
+        .mapAsync(8) { lines =>
+          Future {
+            lines
+              .flatMap(bs => readJournalEntry(config, bs.utf8String))
+          }
+        }
+        .mapConcat(identity)
+        .recoverWithRetries(1, {
+          case z: ZipException => Source.empty
+        })
+
     def readAllEntries(): Future[Source[MetadataEnvelope, Any]] =
       // add some delay which should help to make sure that live stream is running and connected when we start reading the
       // file
       after(100.millis, system.scheduler) {
-        Future.successful {
-          if (config.allMetadataFile.exists())
-            FileIO.fromPath(config.allMetadataFile.toPath)
-              .via(Compression.gunzip())
-              .via(Framing.delimiter(ByteString("\n"), 1000000))
-              // batch and async loading
-              .grouped(100) // TODO: make configurable?
-              .mapAsync(8) { lines =>
-                Future {
-                  lines
-                    .flatMap(bs => readJournalEntry(config, bs.utf8String))
-                }
-              }
-              .mapConcat(identity)
-              .recoverWithRetries(1, {
-                case z: ZipException => Source.empty
-              })
-          else
-            Source.empty
-        }
+        Future.successful(allMetadataSourceOrEmpty())
       }
+
+    def allMetadataSourceOrEmpty(offset: Long = 0): Source[MetadataEnvelope, Any] =
+      if (config.allMetadataFile.exists())
+        FileIO.fromPath(config.allMetadataFile.toPath, chunkSize = 8192, startPosition = offset)
+          .via(readEntryFlow)
+      else
+        Source.empty
+
+    def readFrom(seqNr: Long): Source[StreamEntry, Any] = {
+      val startByte: Future[Long] =
+        FileIO.fromPath(config.metadataIndexFile.toPath)
+          .via(Framing.delimiter(ByteString("\n"), 1000000))
+          .map { line =>
+            val Vector(seqNr, offset) = line.utf8String.split(" ").map(_.toLong).toVector
+            (seqNr.toLong, offset.toLong)
+          }
+          // FIXME here
+          .takeWhile(_._1 <= seqNr)
+          .runWith(Sink.lastOption)
+          .map(_.map(_._2).getOrElse(0L))
+
+      val source = startByte.map(allMetadataSourceOrEmpty)
+      Source.futureSource(source)
+        .map[StreamEntry](Metadata)
+        .concat(Source.single(AllObjectsReplayed))
+    }
 
     val existingEntriesSimple: Source[StreamEntry, Any] =
       Source.lazyFutureSource(readAllEntries _)
@@ -112,7 +136,7 @@ object MetadataJournal {
     // Attaches to the wheel but only returns the journal entries between the given seqNr and AllObjectsReplayed.
     def existingEntriesStartingWith(fromSeqNr: Long): Source[StreamEntry, Any] =
       // FIXME: could also use existingEntriesSimple which would create one full journal stream per consumer
-      existingEntryWheel
+      readFrom(fromSeqNr)
         .via(new TakeFromWheel(fromSeqNr))
 
     val (liveSink, liveSource) =
@@ -151,12 +175,19 @@ object MetadataJournal {
   }
 
   private def writeJournalEntry(config: RepositoryConfig, envelope: MetadataEnvelope): Unit = {
+    if (envelope.seqNr % 1000 == 0) writeJournalIndex(config, envelope) // FIXME: make configurable
     val fos = new FileOutputStream(config.allMetadataFile, true)
     val out = new GZIPOutputStream(fos)
     import config.entryFormat
     out.write(envelope.toJson.compactPrint.getBytes("utf8"))
     out.write('\n')
     out.close()
+    fos.close()
+  }
+  private def writeJournalIndex(config: RepositoryConfig, envelope: MetadataEnvelope): Unit = {
+    val curSize = config.allMetadataFile.length
+    val fos = new FileOutputStream(config.metadataIndexFile, true)
+    fos.write(f"${envelope.seqNr}%d $curSize%d\n".getBytes)
     fos.close()
   }
 

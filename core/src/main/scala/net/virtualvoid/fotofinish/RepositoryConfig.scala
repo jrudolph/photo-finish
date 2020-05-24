@@ -38,6 +38,8 @@ final case class RepositoryConfig(
     }
   }
 
+  val metadataIndexFile: File = new File(cacheDir, "metadata.json.gz.idx")
+
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 
   def repoFile(hash: Hash): File = {
