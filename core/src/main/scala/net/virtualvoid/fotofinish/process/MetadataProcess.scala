@@ -205,8 +205,10 @@ object MetadataProcess {
       Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 
     val snapshotFile = processSnapshotFile(p, config)
-    val snapshot =
-      bench("Deserializing state") { Try(p.loadSnapshot(snapshotFile, config).filter(s => s.processId == p.id && s.processVersion == p.version)) }
+    val snapshotFut = Future {
+      bench("Deserializing state") {
+        Try(p.loadSnapshot(snapshotFile, config).filter(s => s.processId == p.id && s.processVersion == p.version))
+      }
         .recover {
           case ex =>
             println(s"[${p.id}] Loading snapshot from [$snapshotFile] failed with $ex, replacing snapshot and replaying from scratch")
@@ -217,19 +219,26 @@ object MetadataProcess {
         }
         .get
         .getOrElse(Snapshot(p.id, p.version, -1L, p.initialState))
+    }
 
-    println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
+    val innerProcessFlow =
+      Flow.futureFlow {
+        snapshotFut.map { snapshot =>
+          println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
+          statefulDetachedFlow[StreamEntry, WorkEntry, ProcessState](
+            () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, lastSnapshotAt = snapshot.currentSeqNr, hasFinishedReplaying = false, finished = false),
+            _.run(_),
+            _.emit,
+            _.finished
+          )
+        }
+      }
 
     val processFlow =
       Flow[StreamEntry]
         .merge(Source.tick(config.snapshotInterval, config.snapshotInterval, MakeSnapshot))
         .mergeMat(injectApi)(Keep.right)
-        .via(statefulDetachedFlow[StreamEntry, WorkEntry, ProcessState](
-          () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, lastSnapshotAt = snapshot.currentSeqNr, hasFinishedReplaying = false, finished = false),
-          _.run(_),
-          _.emit,
-          _.finished
-        ))
+        .via(innerProcessFlow)
         .recoverWithRetries(1, {
           case ex =>
             println(s"Process for [${p.id}] failed with [${ex.getMessage}]. Aborting the process.")
@@ -237,7 +246,7 @@ object MetadataProcess {
             Source.empty
         })
 
-    journal.source(snapshot.currentSeqNr + 1)
+    Source.futureSource(snapshotFut.map(snapshot => journal.source(snapshot.currentSeqNr + 1)))
       .map {
         case m @ Metadata(entry) =>
           if ((entry.seqNr % 100) == 0) println(s"[${p.id}] at [${entry.seqNr}]")
