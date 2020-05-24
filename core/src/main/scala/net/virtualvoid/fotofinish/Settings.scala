@@ -67,7 +67,7 @@ object Settings {
       removeLongHashEntries,
       autoExtractors,
       8,
-      30.seconds,
+      120.seconds,
       0
     )
 
