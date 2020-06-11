@@ -101,16 +101,20 @@ object MetadataJournal {
 
     def readFrom(seqNr: Long): Source[StreamEntry, Any] = {
       val startByte: Future[Long] =
-        FileIO.fromPath(config.metadataIndexFile.toPath)
-          .via(Framing.delimiter(ByteString("\n"), 1000000))
-          .map { line =>
-            val Vector(seqNr, offset) = line.utf8String.split(" ").map(_.toLong).toVector
-            (seqNr.toLong, offset.toLong)
-          }
-          // FIXME here
-          .takeWhile(_._1 <= seqNr)
-          .runWith(Sink.lastOption)
-          .map(_.map(_._2).getOrElse(0L))
+        if (config.metadataIndexFile.exists)
+          FileIO.fromPath(config.metadataIndexFile.toPath)
+            .via(Framing.delimiter(ByteString("\n"), 1000000))
+            .map { line =>
+              val Vector(seqNr, offset) = line.utf8String.split(" ").map(_.toLong).toVector
+              (seqNr.toLong, offset.toLong)
+            }
+            // FIXME here
+            .takeWhile(_._1 <= seqNr)
+            .runWith(Sink.lastOption)
+            .map(_.map(_._2).getOrElse(0L))
+            .recover { case _ => 0L } // e.g. if reading index file failed for another reason
+        else
+          Future.successful(0L)
 
       val source = startByte.map(allMetadataSourceOrEmpty)
       Source.futureSource(source)
