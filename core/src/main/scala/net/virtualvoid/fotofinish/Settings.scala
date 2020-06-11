@@ -2,6 +2,9 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
+import akka.http.scaladsl.model.DateTime
+import net.virtualvoid.fotofinish.metadata.Id.Hashed
+import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.SimpleKind
 
 import scala.concurrent.duration._
 import net.virtualvoid.fotofinish.metadata._
@@ -42,19 +45,25 @@ object Settings {
   def removeLongHashEntries(entry: MetadataEntry): MetadataEntry =
     entry.target match {
       case Hashed(Hash(alg, _)) if alg != HashAlgorithm.Sha512T160 =>
-        MetadataEntry(
-          entry.target,
-          Vector.empty,
-          DeletedMetadata,
-          CreationInfo(
-            DateTime.now,
-            inferred = true,
-            Deleted
-          ),
-          DeletedMetadata(s"By now unsupported hash algorithm ${alg.name}", SimpleKind(entry.kind.kind, entry.kind.version), filteredOut = true)
-        )
+        deleted(entry, s"By now unsupported hash algorithm ${alg.name}")
       case _ => entry
     }
+  def removeThumbnails(entry: MetadataEntry): MetadataEntry =
+    if (entry.kind == Thumbnail) deleted(entry, "Thumbnail metadata not supported any more")
+    else entry
+
+  def deleted(original: MetadataEntry, reason: String): MetadataEntry =
+    MetadataEntry(
+      original.target,
+      Vector.empty,
+      DeletedMetadata,
+      CreationInfo(
+        DateTime.now,
+        inferred = true,
+        Deleted
+      ),
+      DeletedMetadata(reason, SimpleKind(original.kind.kind, original.kind.version), filteredOut = true)
+    )
 
   val config =
     RepositoryConfig(
@@ -64,7 +73,7 @@ object Settings {
       cacheDir,
       HashAlgorithm.Sha512T160,
       knownMetadataKinds,
-      removeLongHashEntries,
+      (removeLongHashEntries _).andThen(removeThumbnails),
       autoExtractors,
       8,
       120.seconds,
