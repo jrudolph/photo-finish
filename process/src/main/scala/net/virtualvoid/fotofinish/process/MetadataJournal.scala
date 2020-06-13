@@ -4,18 +4,15 @@ import java.io.{ File, FileOutputStream }
 import java.util.zip.{ GZIPOutputStream, ZipException }
 
 import akka.actor.ActorSystem
-import akka.pattern.after
 import akka.stream.{ Attributes, FlowShape, Inlet, KillSwitches, Outlet }
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.metadata.{ MetadataEntry, MetadataEnvelope }
 import net.virtualvoid.fotofinish.process.MetadataProcess.{ AllObjectsReplayed, Metadata, ShuttingDown, StreamEntry }
-import net.virtualvoid.fotofinish.util.RepeatSource
 import spray.json._
 
 import scala.concurrent.Future
-import scala.concurrent.duration._
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -84,14 +81,7 @@ object MetadataJournal {
           case z: ZipException => Source.empty
         })
 
-    def readAllEntries(): Future[Source[MetadataEnvelope, Any]] =
-      // add some delay which should help to make sure that live stream is running and connected when we start reading the
-      // file
-      after(100.millis, system.scheduler) {
-        Future.successful(allMetadataSourceOrEmpty())
-      }
-
-    def allMetadataSourceOrEmpty(offset: Long = 0): Source[MetadataEnvelope, Any] =
+    def allMetadataSourceOrEmpty(offset: Long): Source[MetadataEnvelope, Any] =
       if (config.allMetadataFile.exists())
         FileIO.fromPath(config.allMetadataFile.toPath, chunkSize = 8192, startPosition = offset)
           .via(readEntryFlow)
@@ -121,24 +111,43 @@ object MetadataJournal {
         .concat(Source.single(AllObjectsReplayed))
     }
 
-    val existingEntriesSimple: Source[StreamEntry, Any] =
+    // Not needed currently
+    /*
+    import akka.pattern.after
+    import scala.concurrent.duration._
+
+    def readAllEntries(): Future[Source[MetadataEnvelope, Any]] =
+      // add some delay which should help to make sure that live stream is running and connected when we start reading the
+      // file
+      after(100.millis, system.scheduler) {
+        Future.successful(allMetadataSourceOrEmpty())
+      }*/
+
+    // The simplest way of reading existing entries. Main problem: always reads all entries from the beginning of time.
+    /*val existingEntriesSimple: Source[StreamEntry, Any] =
       Source.lazyFutureSource(readAllEntries _)
         .map[StreamEntry](Metadata)
-        .concat(Source.single(AllObjectsReplayed))
+        .concat(Source.single(AllObjectsReplayed))*/
 
     // A persisting source that replays all existing journal entries on and on as long as something listens to it.
     // The idea is similar to IP multicast that multiple subscribers can attach to the already running program and
     // the overhead for providing the data is only paid once for all subscribers.
     // Another analogy would be a news ticker on a news channel where casual watchers can come and go at any point in
     // time and would eventually get all the information as everyone else (without requiring a dedicated TV for any watcher).
+    //
+    // Currently unused, because it is only helpful during complete rebuilds, otherwise, it has two issues:
+    //   * head-of-line blocking if the BroadcastHub buffer is exhausted
+    //   * always starts at the beginning, so regardless of where you want to start, you'll always have
+    //     to read everything
+    /*
+    import net.virtualvoid.fotofinish.util.RepeatSource
     val existingEntryWheel: Source[StreamEntry, Any] =
       Source
         .fromGraph(new RepeatSource(existingEntriesSimple))
-        .runWith(BroadcastHub.sink(2048))
+        .runWith(BroadcastHub.sink(2048))*/
 
     // Attaches to the wheel but only returns the journal entries between the given seqNr and AllObjectsReplayed.
     def existingEntriesStartingWith(fromSeqNr: Long): Source[StreamEntry, Any] =
-      // FIXME: could also use existingEntriesSimple which would create one full journal stream per consumer
       readFrom(fromSeqNr)
         .via(new TakeFromWheel(fromSeqNr))
 
