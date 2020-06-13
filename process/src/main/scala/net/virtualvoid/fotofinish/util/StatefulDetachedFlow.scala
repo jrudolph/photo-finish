@@ -1,5 +1,6 @@
 package net.virtualvoid.fotofinish.util
 
+import akka.stream.scaladsl.Flow
 import akka.stream.{ Attributes, FlowShape, Inlet, Outlet }
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 
@@ -29,4 +30,8 @@ class StatefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, 
       if (isFinished(state)) completeStage()
     }
   }
+}
+object StatefulDetachedFlow {
+  def apply[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
+    Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
 }

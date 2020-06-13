@@ -51,7 +51,11 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[WorkEntry], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, config: ProcessConfig, journal: MetadataJournal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
+  def asSource(
+    p:            MetadataProcess,
+    config:       ProcessConfig,
+    journal:      MetadataJournal,
+    extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
@@ -201,9 +205,6 @@ object MetadataProcess {
       case AllObjectsReplayed            => throw new IllegalStateException("Unexpected AllObjectsReplayed in state liveEvents")
     }
 
-    def statefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emit: S => (S, Vector[U]), isFinished: S => Boolean): Flow[T, U, Any] =
-      Flow.fromGraph(new StatefulDetachedFlow(initialState, handle, emit, isFinished))
-
     val snapshotFile = processSnapshotFile(p, config)
     val snapshotFut = Future {
       bench("Deserializing state") {
@@ -225,7 +226,7 @@ object MetadataProcess {
       Flow.futureFlow {
         snapshotFut.map { snapshot =>
           println(s"[${p.id}] initialized process at seqNr [${snapshot.currentSeqNr}]")
-          statefulDetachedFlow[StreamEntry, WorkEntry, ProcessState](
+          StatefulDetachedFlow[StreamEntry, WorkEntry, ProcessState](
             () => ProcessState(snapshot.currentSeqNr, snapshot.state, replaying(Vector.empty), Vector.empty, lastSnapshotAt = snapshot.currentSeqNr, hasFinishedReplaying = false, finished = false),
             _.run(_),
             _.emit,
