@@ -75,14 +75,14 @@ private[web] class ServerRoutes(app: MetadataApp) {
                   complete {
                     HttpEntity(
                       MediaTypes.`image/jpeg`,
-                      ImageTools.correctOrientation(meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
+                      ImageTools.correctOrientation(MetadataShortcuts.Orientation(meta).getOrElse(Orientation.Normal))(fileInfo.repoFile)
                     )
                   }
                 },
                 path("thumbnail") {
                   val thumbnailType = "square150"
                   thumbnailCache(fileInfo.hash, thumbnailType) {
-                    val thumbData = ImageTools.squareThumbnailIM(150, meta.get(MetadataShortcuts.Orientation).getOrElse(Orientation.Normal))(fileInfo.repoFile)
+                    val thumbData = ImageTools.squareThumbnailIM(150, MetadataShortcuts.Orientation(meta).getOrElse(Orientation.Normal))(fileInfo.repoFile)
 
                     complete {
                       HttpEntity(MediaTypes.`image/jpeg`, thumbData)
@@ -119,7 +119,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
                         onSuccess(Future.traverse(neighbors)(mapEntry)) { annotatedNeighbors =>
                           complete {
-                            meta.get(MetadataShortcuts.Faces).lift(i).map { thisFace =>
+                            MetadataShortcuts.Faces(meta).lift(i).map { thisFace =>
                               FaceInfoPage(thisFace, annotatedNeighbors)
                             }
                           }
@@ -218,7 +218,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
   def fields(fileInfo: FileInfo, metadata: Metadata): Seq[(String, Html)] = {
     //def from[T](name: String, shortcut: MetadataShortcuts.ShortCut[T])(display: T => Html):
     def fromOptional[T](name: String, shortcut: MetadataShortcuts.ShortCut[Option[T]])(display: T => Html): Seq[(String, Html)] =
-      metadata.get(shortcut).map { t => name -> display(t) }.toSeq
+      shortcut(metadata).map { t => name -> display(t) }.toSeq
 
     val ingestion = metadata.getValues[IngestionData]
 

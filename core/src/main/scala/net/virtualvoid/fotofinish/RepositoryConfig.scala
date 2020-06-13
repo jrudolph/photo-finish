@@ -4,6 +4,7 @@ import java.io.{ File, FileOutputStream }
 
 import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, SimpleJournalEntry, SimpleKind }
 import net.virtualvoid.fotofinish.metadata._
+import net.virtualvoid.fotofinish.process.ProcessConfig
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
 
@@ -22,7 +23,7 @@ final case class RepositoryConfig(
     executorParallelism: Int,
     snapshotInterval:    FiniteDuration,
     snapshotOffset:      Long // only create a new snapshot if this many events have been processed since (because replaying will likely be faster otherwise)
-) {
+) extends ProcessConfig {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
 
@@ -42,6 +43,7 @@ final case class RepositoryConfig(
 
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 
+  override def repoFileFor(hash: Hash): File = repoFileFor(hash)
   def repoFile(hash: Hash): File = {
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}"
     val file0 = new File(storageDir, fileName)

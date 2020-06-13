@@ -9,18 +9,26 @@ lazy val root: Project = project.in(file("."))
 
 val rootRef = ProjectRef(file("."), "root")
 
-lazy val core: Project = project
+lazy val process: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
       "io.spray" %% "spray-json" % "1.3.5",
-      "com.drewnoakes" % "metadata-extractor" % "2.13.0",
-      "net.java.dev.jna" % "jna" % "5.5.0",
       "org.xerial" % "sqlite-jdbc" % "3.30.1",
 
       "com.typesafe.akka" %% "akka-actor" % akkaV,
       "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
+    ),
+  )
+
+lazy val core: Project = project
+  .dependsOn(process)
+  .settings(basicSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "com.drewnoakes" % "metadata-extractor" % "2.13.0",
+      "net.java.dev.jna" % "jna" % "5.5.0",
     ),
 
     javaOptions in run += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",

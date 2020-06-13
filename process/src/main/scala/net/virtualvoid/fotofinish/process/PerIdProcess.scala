@@ -6,7 +6,6 @@ import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
 import net.virtualvoid.fotofinish.metadata.{ DeletedMetadata, ExtractionContext, Id, MetadataEntry, MetadataEnvelope }
-import net.virtualvoid.fotofinish.RepositoryConfig
 import spray.json.{ JsNull, JsValue, JsonFormat }
 
 import scala.concurrent.{ ExecutionContext, Future }
@@ -278,7 +277,7 @@ trait PerKeyProcess { pkp =>
 
       override def initializeStateSnapshot(state: State): State = interpretEffect(state, pkp.initializeSnapshot)
 
-      def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[State]): State = {
+      def saveSnapshot(target: File, config: ProcessConfig, snapshot: Snapshot[State]): State = {
         val state = snapshot.state
         val connectionInfo = state.connection.getOrElse(new ConnectionInfo(openConnectionTo(target)))
         val conn = connectionInfo.connection
@@ -339,7 +338,7 @@ trait PerKeyProcess { pkp =>
         stmt.execute("commit transaction")
         state.copy(dirty = Set.empty, newEntries = Set.empty, connection = Some(connectionInfo)) // TODO: drop part of the cache?
       }
-      def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[State]] =
+      def loadSnapshot(target: File, config: ProcessConfig)(implicit system: ActorSystem): Option[Snapshot[State]] =
         if (target.exists()) {
           val conn = openConnectionTo(target)
           val stmt = conn.createStatement

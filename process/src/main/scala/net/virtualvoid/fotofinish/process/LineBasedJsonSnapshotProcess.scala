@@ -7,7 +7,6 @@ import java.util.zip.GZIPOutputStream
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Compression, FileIO, Framing, Sink }
 import akka.util.ByteString
-import net.virtualvoid.fotofinish.RepositoryConfig
 import net.virtualvoid.fotofinish.metadata.MetadataEntry
 import spray.json.JsonFormat
 
@@ -21,7 +20,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
 
   private case class SnapshotHeader(processId: String, processVersion: Int, currentSeqNr: Long)
   private implicit val headerFormat = jsonFormat3(SnapshotHeader.apply)
-  def saveSnapshot(targetFile: File, config: RepositoryConfig, snapshot: Snapshot[S]): S = {
+  def saveSnapshot(targetFile: File, config: ProcessConfig, snapshot: Snapshot[S]): S = {
     val tmpFile = File.createTempFile(targetFile.getName, ".tmp", targetFile.getParentFile)
     val os = new GZIPOutputStream(new FileOutputStream(tmpFile))
 
@@ -37,7 +36,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
     Files.move(tmpFile.toPath, targetFile.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     snapshot.state
   }
-  def loadSnapshot(file: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]] = {
+  def loadSnapshot(file: File, config: ProcessConfig)(implicit system: ActorSystem): Option[Snapshot[S]] = {
     import system.dispatcher
 
     if (file.exists) {

@@ -9,7 +9,6 @@ import akka.stream.{ Attributes, FlowShape, Inlet, KillSwitches, Outlet }
 import akka.stream.scaladsl.{ BroadcastHub, Compression, FileIO, Flow, Framing, Keep, MergeHub, Sink, Source }
 import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 import akka.util.ByteString
-import net.virtualvoid.fotofinish.RepositoryConfig
 import net.virtualvoid.fotofinish.metadata.{ MetadataEntry, MetadataEnvelope }
 import net.virtualvoid.fotofinish.process.MetadataProcess.{ AllObjectsReplayed, Metadata, ShuttingDown, StreamEntry }
 import net.virtualvoid.fotofinish.util.RepeatSource
@@ -31,7 +30,7 @@ object MetadataJournal {
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def apply(config: RepositoryConfig)(implicit system: ActorSystem): MetadataJournal = {
+  def apply(config: ProcessConfig)(implicit system: ActorSystem): MetadataJournal = {
     import system.dispatcher
 
     val killSwitch = KillSwitches.shared("kill-journal")
@@ -167,7 +166,7 @@ object MetadataJournal {
     }
   }
 
-  private def readJournalEntry(config: RepositoryConfig, entry: String): Option[MetadataEnvelope] = {
+  private def readJournalEntry(config: ProcessConfig, entry: String): Option[MetadataEnvelope] = {
     import config.entryFormat
     try Some(entry.parseJson.convertTo[MetadataEnvelope])
     catch {
@@ -178,7 +177,7 @@ object MetadataJournal {
     }
   }
 
-  private def writeJournalEntry(config: RepositoryConfig, envelope: MetadataEnvelope): Unit = {
+  private def writeJournalEntry(config: ProcessConfig, envelope: MetadataEnvelope): Unit = {
     if (envelope.seqNr % 1000 == 0) writeJournalIndex(config, envelope) // FIXME: make configurable
     val fos = new FileOutputStream(config.allMetadataFile, true)
     val out = new GZIPOutputStream(fos)
@@ -188,7 +187,7 @@ object MetadataJournal {
     out.close()
     fos.close()
   }
-  private def writeJournalIndex(config: RepositoryConfig, envelope: MetadataEnvelope): Unit = {
+  private def writeJournalIndex(config: ProcessConfig, envelope: MetadataEnvelope): Unit = {
     val curSize = config.allMetadataFile.length
     val fos = new FileOutputStream(config.metadataIndexFile, true)
     fos.write(f"${envelope.seqNr}%d $curSize%d\n".getBytes)

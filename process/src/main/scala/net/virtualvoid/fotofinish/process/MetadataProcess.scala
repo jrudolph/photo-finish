@@ -39,8 +39,8 @@ trait MetadataProcess {
   /** Allows to prepare state loaded from snapshot */
   def initializeStateSnapshot(state: S): S = state
 
-  def saveSnapshot(target: File, config: RepositoryConfig, snapshot: Snapshot[S]): S
-  def loadSnapshot(target: File, config: RepositoryConfig)(implicit system: ActorSystem): Option[Snapshot[S]]
+  def saveSnapshot(target: File, config: ProcessConfig, snapshot: Snapshot[S]): S
+  def loadSnapshot(target: File, config: ProcessConfig)(implicit system: ActorSystem): Option[Snapshot[S]]
 }
 
 object MetadataProcess {
@@ -51,7 +51,7 @@ object MetadataProcess {
   case object ShuttingDown extends StreamEntry
   final case class Execute[S, T](f: S => (S, Vector[WorkEntry], T), promise: Promise[T]) extends StreamEntry
 
-  def asSource(p: MetadataProcess, config: RepositoryConfig, journal: MetadataJournal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
+  def asSource(p: MetadataProcess, config: ProcessConfig, journal: MetadataJournal, extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
@@ -84,7 +84,7 @@ object MetadataProcess {
       def executionContext: ExecutionContext = extractionEC
       def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
         // FIXME: easy for now as we expect all hashes to be available as files
-        f(config.fileInfoOf(hash).repoFile)
+        f(config.repoFileFor(hash))
     }
 
     type Handler = ProcessState => StreamEntry => ProcessState
@@ -260,6 +260,6 @@ object MetadataProcess {
   }
 
   // FIXME: join with header
-  private def processSnapshotFile(p: MetadataProcess, config: RepositoryConfig): File =
+  private def processSnapshotFile(p: MetadataProcess, config: ProcessConfig): File =
     new File(config.snapshotDir, s"${p.id.replaceAll("""[\[\]]""", "_")}.snapshot")
 }

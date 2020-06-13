@@ -24,7 +24,7 @@
 
 <h2>Faces</h2>
 
-@for(i <- metadata.get(MetadataShortcuts.Faces).indices) {
+@for(i <- MetadataShortcuts.Faces(metadata).indices) {
 <a href="face/@i/info/"><img src="face/@i" height="150px"/></a>
 }
 
@@ -35,15 +35,15 @@
 <table>
     <tr>
         <th></th>
-@for(i <- metadata.get(MetadataShortcuts.Faces).indices) {
+@for(i <- MetadataShortcuts.Faces(metadata).indices) {
         <th><img src="face/@i" height="50px"/></th>
 }
     </tr>
 
-@for((face, i) <- metadata.get(MetadataShortcuts.Faces).zipWithIndex) {
+@for((face, i) <- MetadataShortcuts.Faces(metadata).zipWithIndex) {
     <tr>
         <th><img src="face/@i" height="50px"/></th>
-  @for(face2 <- metadata.get(MetadataShortcuts.Faces)) {
+  @for(face2 <- MetadataShortcuts.Faces(metadata)) {
         <td>@{Math.sqrt(net.virtualvoid.fotofinish.ClusterTest.sqdistFloatWithoutThreshold(face.modelData, face2.modelData)) * 100 toInt}</td>
   }
     </tr>
