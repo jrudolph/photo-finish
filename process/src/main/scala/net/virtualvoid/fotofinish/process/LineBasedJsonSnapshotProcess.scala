@@ -81,16 +81,19 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
       None
   }
 
-  type StateEntryT
-  def stateAsEntries(state: S): Iterator[StateEntryT]
-  def entriesAsState(entries: Iterable[StateEntryT]): S
-  def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT]
+  /** Allows to prepare state loaded from snapshot */
+  protected def initializeStateSnapshot(state: S): S = state
+
+  protected type StateEntryT
+  protected def stateAsEntries(state: S): Iterator[StateEntryT]
+  protected def entriesAsState(entries: Iterable[StateEntryT]): S
+  protected def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT]
 }
 trait SingleEntryState extends LineBasedJsonSnaphotProcess {
   override type StateEntryT = S
 
-  def stateAsEntries(state: S): Iterator[S] = Iterator(state)
-  def entriesAsState(entries: Iterable[S]): S = entries.head
-  def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S] = stateFormat
-  def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S]
+  protected def stateAsEntries(state: S): Iterator[S] = Iterator(state)
+  protected def entriesAsState(entries: Iterable[S]): S = entries.head
+  protected def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S] = stateFormat
+  protected def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[S]
 }

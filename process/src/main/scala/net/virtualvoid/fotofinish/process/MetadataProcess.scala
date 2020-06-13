@@ -36,9 +36,6 @@ trait MetadataProcess {
   def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
-  /** Allows to prepare state loaded from snapshot */
-  def initializeStateSnapshot(state: S): S = state
-
   def saveSnapshot(target: File, config: ProcessConfig, snapshot: Snapshot[S]): S
   def loadSnapshot(target: File, config: ProcessConfig)(implicit system: ActorSystem): Option[Snapshot[S]]
 }
