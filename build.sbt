@@ -1,8 +1,8 @@
 val scalaV = "2.13.1"
-val akkaV = "2.6.1"
-val akkaHttpV = "10.1.11"
+val akkaV = "2.6.6"
+val akkaHttpV = "10.2.0-M1"
 
-val scalaTestV = "3.1.0"
+val scalaTestV = "3.1.2"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
@@ -27,7 +27,7 @@ lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "com.drewnoakes" % "metadata-extractor" % "2.13.0",
+      "com.drewnoakes" % "metadata-extractor" % "2.14.0",
       "net.java.dev.jna" % "jna" % "5.5.0",
     ),
 
