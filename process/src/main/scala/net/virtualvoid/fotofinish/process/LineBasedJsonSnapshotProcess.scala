@@ -14,7 +14,7 @@ import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
-trait LineBasedJsonSnaphotProcess extends MetadataProcess {
+trait LineBasedJsonSnapshotProcess extends MetadataProcess {
   import spray.json.DefaultJsonProtocol._
   import spray.json._
 
@@ -89,7 +89,7 @@ trait LineBasedJsonSnaphotProcess extends MetadataProcess {
   protected def entriesAsState(entries: Iterable[StateEntryT]): S
   protected def stateEntryFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[StateEntryT]
 }
-trait SingleEntryState extends LineBasedJsonSnaphotProcess {
+trait SingleEntryState extends LineBasedJsonSnapshotProcess {
   override type StateEntryT = S
 
   protected def stateAsEntries(state: S): Iterator[S] = Iterator(state)
