@@ -305,6 +305,4 @@ final case class Metadata(entries: immutable.Seq[MetadataEntry]) {
   def getValues[E: ClassTag]: immutable.Seq[E] = getEntries[E].map(_.value)
 
   def get[T: ClassTag]: Option[T] = getEntry[T].map(_.value)
-
-  //def get[T](shortcut: MetadataShortcuts.ShortCut[T]): T = shortcut(this)
 }
