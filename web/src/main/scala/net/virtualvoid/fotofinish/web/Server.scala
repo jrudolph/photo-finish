@@ -19,6 +19,7 @@ import metadata._
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.process.{ HierarchyAccess, Node }
 
+import scala.annotation.tailrec
 import scala.concurrent.Future
 import scala.util.Success
 import scala.util.control.NonFatal
@@ -222,8 +223,17 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
     val ingestion = metadata.getValues[IngestionData]
 
-    def formatIngestionData(d: IngestionData): String =
-      s"Original Path: ${d.originalFullFilePath}"
+    def formatIngestionData(d: IngestionData): String = {
+      @tailrec def createLink(remainingSegments: Seq[String], linkPrefix: String, result: String): String = remainingSegments match {
+        case Nil         => result
+        case head +: Nil => result + "/" + head
+        case head +: tail =>
+          val link = linkPrefix + "/" + head
+          createLink(tail, link, result + s"""/<a href="$link">$head</a>""")
+      }
+
+      s"Original Path: ${createLink(d.originalFullFilePath.split("/").toVector.drop(1), "/by-filename", "")}"
+    }
 
     import MetadataShortcuts._
     Seq(
