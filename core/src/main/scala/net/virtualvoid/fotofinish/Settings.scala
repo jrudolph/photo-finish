@@ -10,12 +10,15 @@ import scala.concurrent.duration._
 import net.virtualvoid.fotofinish.metadata._
 
 object Settings {
-  /*val repo = new File("/home/johannes/Fotos/tmp/repo")
-  val meta = new File("/home/johannes/Fotos/tmp/repo/metadata")
-  val linkDir = new File("/home/johannes/FotosSorted")*/
-  val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
+
+  val repo = new File("/home/johannes/Fotos/tmp/repo")
+  val meta = new File("/home/johannes/git/self/photo-finish/tmprepo2/")
+  val linkDir = new File("/home/johannes/FotosSorted")
+
+  /*val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
   val meta = new File("/home/johannes/git/self/photo-finish/tmprepo/metadata")
-  val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")
+  val linkDir = new File("/home/johannes/git/self/photo-finish/tmprepo/links")*/
+
   val cacheDir = new File(meta, "cache")
 
   repo.mkdirs()
