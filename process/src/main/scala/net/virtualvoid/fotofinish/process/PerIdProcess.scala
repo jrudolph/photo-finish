@@ -275,8 +275,6 @@ trait PerKeyProcess { pkp =>
             handleWithState.access(state => f(state.global))
         })
 
-      override def initializeStateSnapshot(state: State): State = interpretEffect(state, pkp.initializeSnapshot)
-
       def saveSnapshot(target: File, config: ProcessConfig, snapshot: Snapshot[State]): State = {
         val state = snapshot.state
         val connectionInfo = state.connection.getOrElse(new ConnectionInfo(openConnectionTo(target)))
@@ -362,7 +360,8 @@ trait PerKeyProcess { pkp =>
           }
           val hasWork = loadSet("has_work")
 
-          val state = State(globalState, Map.empty, Set.empty, Set.empty, hasWork, Some(new ConnectionInfo(conn)))
+          val state0 = State(globalState, Map.empty, Set.empty, Set.empty, hasWork, Some(new ConnectionInfo(conn)))
+          val state = interpretEffect(state0, pkp.initializeSnapshot)
 
           Some {
             Snapshot(
