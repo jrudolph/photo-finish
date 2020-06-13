@@ -13,16 +13,15 @@ object StreamedScannerMain extends App {
 
   val app = MetadataApp(Settings.config)
 
-  //journal.source(0).runForeach(println)
-  val dir = new File("/home/johannes/git/self/photo-finish/tmprepo/ingest")
+  val dir = new File("/home/johannes/Fotos/Kameras/")
   println(s"Ingesting new files from $dir")
   val is = new Scanner(Settings.config).scan(dir)
   Source.fromIterator(() => is)
     .runWith(app.ingestionDataSink)
 
-  system.scheduler.scheduleOnce(50.seconds) {
+  /*system.scheduler.scheduleOnce(240.seconds) {
     println("Shutting down...")
     app.journal.shutdown()
     system.scheduler.scheduleOnce(1.seconds)(system.terminate())
-  }
+  }*/
 }
