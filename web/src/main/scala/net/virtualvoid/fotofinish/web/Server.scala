@@ -156,7 +156,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
       val imageDatasF =
         for {
           objs <- app.knownObjects()
-          imageDatas <- Future.traverse(objs.take(100).toVector)(imageDataForId).map(_.toSeq.flatten)
+          imageDatas <- Future.traverse(objs.take(100).toVector)(imageDataForId)
         } yield imageDatas
 
       onSuccess(imageDatasF) { imageDatas =>
@@ -240,16 +240,14 @@ private[web] class ServerRoutes(app: MetadataApp) {
       )
   }
 
-  def imageDataForId(id: Id): Future[Option[GalleriaImageData]] = app.metadataFor(id).map { meta =>
+  def imageDataForId(id: Id): Future[GalleriaImageData] = app.metadataFor(id).map { meta =>
     val imageBase = s"/images/${id.hash.hashAlgorithm.name}/${id.hash.asHexString}/"
 
     import MetadataShortcuts._
 
     val description = s"${id.hash.asHexString.take(10)} ${DateTaken(meta).getOrElse("")} ${CameraModel(meta).getOrElse("")}"
 
-    Thumbnail(meta).map { _ =>
-      GalleriaImageData(imageBase + "oriented", imageBase + "thumbnail", imageBase, description)
-    }
+    GalleriaImageData(imageBase + "oriented", imageBase + "thumbnail", imageBase, description)
   }
 
   def exceptionHandler: ExceptionHandler = ExceptionHandler {

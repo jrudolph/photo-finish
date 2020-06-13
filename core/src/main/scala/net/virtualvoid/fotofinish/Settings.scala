@@ -36,7 +36,6 @@ object Settings {
   val autoExtractors: Set[MetadataExtractor] = Set(
     FileTypeDataExtractor.instance,
     ExifBaseDataExtractor.instance,
-    //ThumbnailExtractor.instance, thumbnails are now cached and not metadata
     HashDataExtractor.instance,
     FFProbeDataExtractor.instance,
   //FaceDataExtractor.instance,
