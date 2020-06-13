@@ -6,7 +6,7 @@ import java.io.File
 import akka.Done
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.{ ContentType, HttpEntity, MediaTypes, StatusCodes, Uri }
+import akka.http.scaladsl.model.{ ContentType, DateTime, HttpEntity, MediaTypes, StatusCodes, Uri }
 import akka.http.scaladsl.server.{ Directive0, ExceptionHandler, PathMatcher, PathMatcher1, Route }
 import akka.stream.IOResult
 import akka.stream.scaladsl.{ FileIO, Flow, Keep }
@@ -232,12 +232,17 @@ private[web] class ServerRoutes(app: MetadataApp) {
       fromOptional("Width", Width)(d => Html(d.toString)) ++
       fromOptional("Height", Height)(d => Html(d.toString)) ++
       fromOptional("Orientation", Orientation)(o => Html(o.toString)) ++
-      fromOptional("Date Taken", DateTaken)(d => Html(d.toString)) ++
+      fromOptional("Date Taken", DateTaken)(d => Html(dateLink(d))) ++
       fromOptional("Camera Model", CameraModel)(m => Html(m)) ++
       Seq(
         "Thumbnail" -> Html("""<img src="thumbnail" />"""),
         "Ingestion Data" -> Html(ingestion.map(formatIngestionData).mkString("<br/>"))
       )
+  }
+
+  def dateLink(d: DateTime): String = {
+    import d._
+    f"""<a href="/by-date/$year%4d">$year%4d</a>-<a href="/by-date/$year%4d/$month%02d">$month%02d</a>-$day%02d $hour%02d:$minute%02d:$second%02d"""
   }
 
   def imageDataForId(id: Id): Future[GalleriaImageData] = app.metadataFor(id).map { meta =>
