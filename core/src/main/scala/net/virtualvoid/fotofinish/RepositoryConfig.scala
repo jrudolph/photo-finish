@@ -43,7 +43,7 @@ final case class RepositoryConfig(
 
   def metadataCollectionFor(kind: MetadataKind): File = new File(metadataDir, s"${kind.kind}-v${kind.version}.json.gz")
 
-  override def repoFileFor(hash: Hash): File = repoFileFor(hash)
+  override def repoFileFor(hash: Hash): File = repoFile(hash)
   def repoFile(hash: Hash): File = {
     val fileName = s"by-${hash.hashAlgorithm.name}/${hash.asHexString.take(2)}/${hash.asHexString}"
     val file0 = new File(storageDir, fileName)
