@@ -47,17 +47,17 @@ class Scanner(config: RepositoryConfig) {
         val ufiRepo = unixFileInfo(inRepo.toPath)
         if (ufi == ufiRepo)
           println(s"Already in repo [$file] (as determined by hash), file already linked $YELLOW(inodeMap incomplete?)$RESET")
-        else if (origFileStore == repoFileStore) {
+        else if (origFileStore == repoFileStore && !Files.isSymbolicLink(file.toPath)) {
           println(s"Already in repo [$file] (as determined by hash), ${MAGENTA}replacing with link$RESET")
           val tmpPath = Paths.get(file.getAbsolutePath + ".tmp")
           Files.createLink(tmpPath, inRepo.toPath)
           Files.move(tmpPath, file.toPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } else
-          println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system$RESET orig: $origFileStore repo: $repoFileStore ufiOrig: $ufi ufiRepo: $ufiRepo file: $file repo: $inRepo")
+          println(s"Already in repo [$file] (as determined by hash), ${RED}cannot replace with link because on different file system (or symlink)$RESET orig: $origFileStore repo: $repoFileStore ufiOrig: $ufi ufiRepo: $ufiRepo file: $file repo: $inRepo")
       } else {
         println(s"${GREEN}Creating repo file$RESET for [$file] at [$inRepo] exists: ${inRepo.exists()}")
         Files.createDirectories(inRepo.getParentFile.toPath)
-        if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath()))
+        if (Files.getFileStore(file.toPath.toRealPath()) == Files.getFileStore(inRepo.toPath.getParent.toRealPath()) && !Files.isSymbolicLink(file.toPath))
           Files.createLink(inRepo.toPath, file.toPath)
         else
           Files.copy(file.toPath, inRepo.toPath)
