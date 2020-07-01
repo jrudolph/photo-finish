@@ -22,14 +22,14 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
       Effect.exists(id) { exists =>
         Effect.flatMapKeyState(id) { oldState =>
           val newState = oldState.handleEntry(entry)
-          (newState, Effect.flatMapGlobalState { global =>
+          (newState, Effect.mapGlobalState { global =>
             val nowScheduled = newState.isInstanceOf[Scheduled] // FIXME: use method instead
 
             val global1 = if (nowScheduled) global.addScheduled(id) else global.removeScheduled(id)
             val global2 =
               if (exists) global1.transition(oldState.productPrefix, newState.productPrefix)
               else global1.inc(newState.productPrefix, 1)
-            (global2, Effect.Empty)
+            global2
           })
         }
       }
