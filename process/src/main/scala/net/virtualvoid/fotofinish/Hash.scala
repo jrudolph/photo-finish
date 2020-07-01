@@ -6,6 +6,7 @@ import java.security.MessageDigest
 
 import akka.util.ByteString
 import net.virtualvoid.fotofinish.Hash.chars
+import net.virtualvoid.fotofinish.util.DeduplicationCache
 
 import scala.annotation.tailrec
 import scala.util.Try
@@ -135,10 +136,13 @@ object Hash {
   val chars = "0123456789abcdef"
 
   import spray.json._
+  private val hashCache = DeduplicationCache[Hash]()
+
   implicit val hashFormat = new JsonFormat[Hash] {
     override def read(json: JsValue): Hash = json match {
-      case JsString(data) => Hash.fromPrefixedString(data).getOrElse(throw DeserializationException(s"Prefixed hash string could not be read [$data]"))
-      case x              => throw DeserializationException(s"Hash cannot be read from [$x]")
+      case JsString(data) =>
+        hashCache(Hash.fromPrefixedString(data).getOrElse(throw DeserializationException(s"Prefixed hash string could not be read [$data]")))
+      case x => throw DeserializationException(s"Hash cannot be read from [$x]")
     }
     override def write(hash: Hash): JsValue = JsString(hash.toString)
   }

@@ -2,6 +2,7 @@ package net.virtualvoid.fotofinish.process
 
 import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata._
+import net.virtualvoid.fotofinish.util.DeduplicationCache
 
 import scala.concurrent.{ ExecutionContext, Future }
 
@@ -16,12 +17,13 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   type Api = SimilarFaces
 
   private val effectiveThreshold = FaceUtils.thresholdFromFloat(threshold)
+  private val faceIdCache = DeduplicationCache[FaceId]()
 
   case class Global(
       vectors: Vector[(FaceUtils.FeatureVector, FaceId)]
   ) {
     def handle(hash: Hash, data: FaceData): (Global, Effect) = {
-      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = FaceId(hash, idx) //, faceInfo.rectangle)
+      def faceId(idx: Int, faceInfo: FaceInfo): FaceId = faceIdCache(FaceId(hash, idx)) //, faceInfo.rectangle)
       def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Set.empty)
       val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
 
@@ -76,18 +78,18 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): SimilarFaces =
     new SimilarFaces {
       def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
-        handleWithState.access(FaceId(hash, idx))(_.neighbors.toVector.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
+        handleWithState.access(faceIdCache(FaceId(hash, idx)))(_.neighbors.toVector.map { case (FaceId(hash, idx), dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
     }
   import spray.json._
   import DefaultJsonProtocol._
-  implicit val faceIdFormat: JsonFormat[FaceId] = jsonFormat2(FaceId)
+  implicit val faceIdFormat: JsonFormat[FaceId] = DeduplicationCache.cachedFormat(jsonFormat2(FaceId), faceIdCache)
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerFace] = jsonFormat3(PerFace)
   def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Global] =
     jsonFormat1(Global.apply _)
 
   override def deserializeKey(keyString: String): FaceId = {
     val Array(hash, idx) = keyString.split("#")
-    FaceId(Hash.fromPrefixedString(hash).get, idx.toInt)
+    faceIdCache(FaceId(Hash.fromPrefixedString(hash).get, idx.toInt))
   }
   override def serializeKey(key: FaceId): String = s"${key.hash.toString}#${key.idx}"
 
