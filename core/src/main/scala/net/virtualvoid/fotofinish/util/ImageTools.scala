@@ -59,7 +59,7 @@ object ImageTools {
           case Orientation.Clockwise270 => Some(90)
         }
         val rotate = correctFactor.fold("")(i => s"-rotate $i")
-        withCmd(fileName => s"jpegtran $c $rotate $fileName")
+        withCmd(fileName => s"jpegtran $c $rotate $fileName", _ != 1 /* 0 is OK, 2 is WARNING */ )
       }
     }
   }
@@ -115,12 +115,12 @@ object ImageTools {
       s"convert $fileName -thumbnail ${sideLength}x$sideLength^ -gravity center -extent ${sideLength}x$sideLength -auto-orient -"
     }
 
-  def withCmd(cmd: String => String): ImageTransformation = f => {
+  def withCmd(cmd: String => String, isErrorCodeOk: Int => Boolean = _ == 0): ImageTransformation = f => {
     import sys.process._
     val baos = new ByteArrayOutputStream()
     val theCmd = cmd(f.getAbsolutePath)
     val res = (theCmd #> baos).!
-    if (res != 0) throw new RuntimeException(s"Executing [$theCmd] returned error code $res")
+    if (!isErrorCodeOk(res)) throw new RuntimeException(s"Executing [$theCmd] returned error code $res")
     else ByteString(baos.toByteArray)
   }
 
