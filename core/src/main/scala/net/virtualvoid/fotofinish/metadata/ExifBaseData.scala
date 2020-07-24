@@ -4,8 +4,12 @@ import akka.http.scaladsl.model.DateTime
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.Directory
 import com.drew.metadata.exif.{ ExifDirectoryBase, ExifIFD0Directory, ExifSubIFDDirectory }
+import com.drew.metadata.jpeg.JpegDirectory
+import net.virtualvoid.fotofinish.Hash
+import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
 import spray.json.{ DefaultJsonProtocol, JsString, JsValue, JsonFormat }
 
+import scala.concurrent.Future
 import scala.util.Try
 
 sealed trait Orientation
@@ -45,33 +49,62 @@ object ExifBaseData extends MetadataKind.Impl[ExifBaseData](
 
 object ExifBaseDataExtractor {
   val instance =
-    ImageDataExtractor.fromFileSync("net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor", 1, ExifBaseData) { imageFile =>
-      val metadata = ImageMetadataReader.readMetadata(imageFile)
-      val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
-      val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
-      val dirs = dir0.toSeq ++ dir1.toSeq
+    // FIXME: use builder when available
+    new MetadataExtractor {
+      override type EntryT = ExifBaseData
+      override def kind: String = "net.virtualvoid.fotofinish.metadata.ExifBaseDataExtractor"
+      override def version: Int = 2
 
-      def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
-        tag =>
-          dirs.collectFirst {
-            case dir if dir.containsTag(tag) => Option(tped(dir, tag))
-          }.flatten
+      override def metadataKind: Aux[EntryT] = ExifBaseData
 
-      def dateEntry = entry((dir, tag) => Try(DateTime(dir.getDate(tag).getTime)).toOption.orNull) // may fail if outside reasonable date range
-      def intEntry = entry(_.getInt(_))
-      def stringEntry = entry(_.getString(_))
-
-      val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH)
-      val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT)
-      val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
-      val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
-      val orientation = intEntry(ExifDirectoryBase.TAG_ORIENTATION).map {
-        case 0 | 1 => Orientation.Normal
-        case 3     => Orientation.Clockwise180
-        case 6     => Orientation.Clockwise270
-        case 8     => Orientation.Clockwise90
+      override def dependsOn: Vector[MetadataKind] = Vector(FileTypeData)
+      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = {
+        val mimeType = dependencies.head.asInstanceOf[MetadataEntry.Aux[FileTypeData]].value.mimeType
+        if (ImageDataExtractor.DefaultImageMimeTypeFilter(mimeType)) None
+        else Some(s"Object is not an image but [$mimeType]")
       }
 
-      ExifBaseData(width, height, date, model, orientation)
+      override protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[ExifBaseData] =
+        ctx.accessDataSync(hash) { imageFile =>
+          val metadata = ImageMetadataReader.readMetadata(imageFile)
+          val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
+          val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))
+          val jpegDir = Option(metadata.getFirstDirectoryOfType(classOf[JpegDirectory]))
+          val dirs = dir0.toSeq ++ dir1.toSeq
+
+          def lookup[T](tped: (Directory, Int) => T): (Option[Directory], Int) => Option[T] = { (dir, tag) =>
+            dir.filter(_.containsTag(tag)).flatMap { d =>
+              Option(tped(d, tag))
+            }
+          }
+
+          def entry[T](tped: (Directory, Int) => T): Int => Option[T] =
+            tag =>
+              dirs.collectFirst {
+                case dir if dir.containsTag(tag) => Option(tped(dir, tag))
+              }.flatten
+
+          def dateEntry = entry((dir, tag) => Try(DateTime(dir.getDate(tag).getTime)).toOption.orNull) // may fail if outside reasonable date range
+          def intEntry = entry(_.getInt(_))
+
+          def stringEntry = entry(_.getString(_))
+
+          val width = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_WIDTH).orElse(lookup(_.getInt(_))(jpegDir, JpegDirectory.TAG_IMAGE_WIDTH))
+          val height = intEntry(ExifDirectoryBase.TAG_EXIF_IMAGE_HEIGHT).orElse(lookup(_.getInt(_))(jpegDir, JpegDirectory.TAG_IMAGE_HEIGHT))
+          val date = dateEntry(ExifDirectoryBase.TAG_DATETIME_ORIGINAL)
+          val model = stringEntry(ExifDirectoryBase.TAG_MODEL)
+          val orientation = intEntry(ExifDirectoryBase.TAG_ORIENTATION).map {
+            case 0 | 1 => Orientation.Normal
+            case 3     => Orientation.Clockwise180
+            case 6     => Orientation.Clockwise270
+            case 8     => Orientation.Clockwise90
+          }
+
+          ExifBaseData(width, height, date, model, orientation)
+        }
+
+      override def upgradeExisting(existing: MetadataEntry.Aux[ExifBaseData], dependencies: Vector[MetadataEntry]): MetadataExtractor.Upgrade =
+        if (existing.value.width.isDefined && existing.value.height.isDefined) MetadataExtractor.Keep
+        else MetadataExtractor.RerunExtractor
     }
 }
