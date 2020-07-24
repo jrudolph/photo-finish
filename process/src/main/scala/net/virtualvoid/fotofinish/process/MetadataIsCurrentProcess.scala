@@ -121,7 +121,14 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   }
   private val Initial = CollectingDependencies(extractor.dependsOn.map(k => Missing(k.kind, k.version)), None)
   case class Ready(dependencies: Vector[MetadataEntry]) extends HashState {
-    override def handle(entry: MetadataEntry): HashState = this
+    override def handle(entry: MetadataEntry): HashState = {
+      val newDeps = dependencies.map { existing =>
+        // FIXME: is take latest the only reasonable strategy?
+        if (existing.kind.kind == entry.kind.kind && existing.creation.created < entry.creation.created) entry
+        else existing
+      }
+      Ready(newDeps)
+    }
 
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
@@ -148,7 +155,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 5
+  def version: Int = 6
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
