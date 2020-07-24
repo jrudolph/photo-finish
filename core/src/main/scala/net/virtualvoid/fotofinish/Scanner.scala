@@ -97,7 +97,7 @@ class Scanner(config: RepositoryConfig) {
 }
 
 object Scanner {
-  val supportedFiles = withExtensions("jpg", "jpeg", "txt", "mp4", "avi")
+  val supportedFiles = withExtensions("jpg", "jpeg", "txt", "mp4", "avi", "mov")
 
   def allFilesMatching(dir: File, fileFilter: FileFilter): Iterable[File] = {
     def iterate(dir: File): Iterator[File] = {
