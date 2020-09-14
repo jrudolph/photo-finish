@@ -11,6 +11,7 @@ import spray.json.DefaultJsonProtocol._
 
 import scala.collection.immutable
 import scala.concurrent.Future
+import scala.util.control.NonFatal
 
 object FaceRecognition {
   val MaxFaces = 100
@@ -131,6 +132,9 @@ object FaceDataExtractor {
             val res = FaceRecognition.detectFaces(target.getAbsolutePath, NumJitters)
             res.copy(orientation = orientation, faces = res.faces.map(postProcessInfo))
 
+          } catch {
+            case NonFatal(ex) =>
+              throw new RuntimeException(s"FaceRecognition failed for hash [${hash.asHexString}] because of ${ex.getClass} ${ex.getMessage}", ex)
           } finally tmpFile.delete()
         }
       override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = {
