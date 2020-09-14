@@ -15,7 +15,7 @@
 <div>
     @for((name, hashes) <- entries) {
         @for(hash <- hashes) {
-            <a href="/images/sha-512-t160/@{hash.asHexString}/"><img src="/images/sha-512-t160/@{hash.asHexString}/thumbnail" title="@name"width="150px"/></a>
+            <a href="/images/sha-512-t160/@{hash.asHexString}/"><img src="/images/sha-512-t160/@{hash.asHexString}/thumbnail" title="@name"width="150px" loading="lazy"/></a>
         }
     }
 </div>
