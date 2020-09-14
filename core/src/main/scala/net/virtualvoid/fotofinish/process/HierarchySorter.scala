@@ -58,15 +58,15 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
   type Api = HierarchyAccess[T]
 
   override def id: String = super.id + "." + hierarchy.getClass.getName
-  def version: Int = hierarchy.version
+  def version: Int = 10000 + hierarchy.version
 
-  case class NodeImpl(fullPath: Vector[T], children: Map[T, NodeImpl], entries: Map[T, Vector[Hash]]) {
+  case class NodeImpl(fullPath: Vector[T], children: Map[T, NodeImpl], entries: Map[T, Set[Hash]]) {
     def enter(hash: Hash, remainingPathSegments: Vector[T]): NodeImpl =
       remainingPathSegments match {
         case head +: tail =>
           if (tail.isEmpty) {
-            val existingEntries = entries.getOrElse(head, Vector.empty)
-            copy(entries = entries + (head -> (existingEntries :+ hash)))
+            val existingEntries = entries.getOrElse(head, Set.empty)
+            copy(entries = entries + (head -> (existingEntries + hash)))
           } else {
             val node = children.getOrElse(head, NodeImpl(fullPath :+ head, Map.empty, Map.empty))
             copy(children = children.updated(head, node.enter(hash, tail)))
@@ -105,7 +105,7 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
         override def numChildren: Int = node.children.size
 
         override def entries: Future[Map[T, Vector[Hash]]] =
-          handleWithState.access(_.root.get(fullPath).fold(Map.empty[T, Vector[Hash]])(_.entries))
+          handleWithState.access(_.root.get(fullPath).fold(Map.empty[T, Vector[Hash]])(_.entries.view.mapValues(_.toVector.sorted).toMap))
         override def children: Future[Map[T, Node[T]]] =
           handleWithState.access(_.root.get(fullPath).fold(Map.empty[T, Node[T]])(_.children.view.mapValues(v => n(handleWithState)(v)).toMap))
       }
