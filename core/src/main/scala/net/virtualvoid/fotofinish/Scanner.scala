@@ -24,7 +24,7 @@ class Scanner(config: RepositoryConfig) {
 
     println(s"Found $numFiles files with total size $totalSize")
 
-    allFiles.iterator.map(f => ensureInRepo(f))
+    allFiles.iterator.filter(_.exists).map(f => ensureInRepo(f))
   }
 
   def ensureInRepo(file: File): (Hash, IngestionData) = {
