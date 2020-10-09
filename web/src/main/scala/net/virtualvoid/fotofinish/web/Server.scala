@@ -153,14 +153,13 @@ private[web] class ServerRoutes(app: MetadataApp) {
     )
 
   lazy val gallery: Route =
-    get {
-      val imageDatasF =
-        for {
-          objs <- app.knownObjects()
-          imageDatas <- Future.traverse(objs.take(100).toVector)(imageDataForId)
-        } yield imageDatas
+    onSuccess(app.knownObjects()) { objs =>
+      galleryRouteForIds(objs, 100)
+    }
 
-      onSuccess(imageDatasF) { imageDatas =>
+  def galleryRouteForIds(ids: Iterable[Id], maxNumber: Int = 10000): Route =
+    get {
+      onSuccess(Future.traverse(ids.take(maxNumber).toVector)(imageDataForId)) { imageDatas =>
         complete(Gallery(imageDatas))
       }
     }
@@ -193,7 +192,12 @@ private[web] class ServerRoutes(app: MetadataApp) {
             val es = node.entries
             val ch = node.children
             (onSuccess(ch) & onSuccess(es)) { (children, entries) =>
-              complete(Hierarchy(node.name, node.fullPath.mkString("/"), entries.toVector.sortBy(_._1), children.map(c => c._1 -> c._2.numEntries).toVector.sorted))
+              parameter("gallery".?) { gallery =>
+                if (gallery.isDefined)
+                  galleryRouteForIds(entries.toVector.sortBy(_._1).flatMap(_._2.map(Hashed.apply)))
+                else
+                  complete(Hierarchy(node.name, node.fullPath.mkString("/"), entries.toVector.sortBy(_._1), children.map(c => c._1 -> c._2.numEntries).toVector.sorted))
+              }
             }
           case None => reject
         }
