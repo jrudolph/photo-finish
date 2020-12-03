@@ -11,7 +11,7 @@
 <div>
     <table>
         @for((child, num) <- children) {
-            <tr><td><a href="@child">@child</a></td><td>@if(num > 0){ @num }</td></tr>
+            <tr><td><a href="@child/">@child</a></td><td>@if(num > 0){ @num }</td></tr>
         }
     </table>
 </div>

@@ -2,12 +2,13 @@ package net.virtualvoid.fotofinish
 package web
 
 import java.io.File
-
 import akka.Done
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.{ ContentType, DateTime, HttpEntity, MediaTypes, StatusCodes, Uri }
-import akka.http.scaladsl.server.{ Directive0, ExceptionHandler, PathMatcher, PathMatcher1, Route }
+import akka.http.scaladsl.model.{ ContentType, DateTime, headers, HttpEntity, HttpMethod, HttpMethods, HttpResponse, MediaTypes, StatusCodes, Uri }
+import headers.RawHeader
+import akka.http.scaladsl.server.{ Directive, Directive0, ExceptionHandler, PathMatcher, PathMatchers, PathMatcher1, Route, RouteResult }
+import akka.http.scaladsl.settings.ServerSettings
 import akka.stream.IOResult
 import akka.stream.scaladsl.{ FileIO, Flow, Keep }
 import akka.util.ByteString
@@ -28,10 +29,11 @@ object Server extends App {
   implicit val system = ActorSystem()
   import system.dispatcher
 
+  val settings = ServerSettings(system).mapParserSettings(_.withCustomMethods(ServerRoutes.PROPFIND))
   val app = MetadataApp(Settings.config)
   val binding = Http().bindAndHandle(
     ServerRoutes.route(app),
-    "localhost", 8654
+    "localhost", 8654, settings = settings
   )
   binding.onComplete { res =>
     println(s"Binding now $res")
@@ -41,6 +43,8 @@ object Server extends App {
 object ServerRoutes {
   def route(app: MetadataApp): Route =
     new ServerRoutes(app).main
+
+  val PROPFIND = HttpMethod.custom("PROPFIND")
 }
 
 private[web] class ServerRoutes(app: MetadataApp) {
@@ -197,31 +201,114 @@ private[web] class ServerRoutes(app: MetadataApp) {
       }
     }
 
-  def hierarchy(access: HierarchyAccess[String]): Route =
-    (get & redirectToTrailingSlashIfMissing(StatusCodes.Found)) {
-      def forNode(nodeF: Future[Option[Node[String]]]): Route =
-        onSuccess(nodeF) {
-          case Some(node) =>
-            val es = node.entries
-            val ch = node.children
-            (onSuccess(ch) & onSuccess(es)) { (children, entries) =>
-              parameter("gallery".?) { gallery =>
+  def logAccesses: Directive0 =
+    Directive { inner =>
+      val innerR = Route.seal(inner(()))
+      ctx => innerR(ctx).map {
+        case r @ RouteResult.Complete(res) =>
+          val req = ctx.request
+          ctx.log.info(s"${req.method} ${req.uri} => ${res.status}")
+          r
+      }
+    }
+
+  def hierarchy(access: HierarchyAccess[String]): Route = logAccesses {
+    def forNode(nodeF: Future[Option[Node[String]]]): Route =
+      onSuccess(nodeF) {
+        case Some(node) =>
+          val es = node.entries
+          val ch = node.children
+          (onSuccess(ch) & onSuccess(es)) { (children, entries) =>
+            concat(
+              (get & parameter("gallery".?)) { gallery =>
                 if (gallery.isDefined)
                   galleryRouteForIds(entries.toVector.sortBy(_._1).flatMap(_._2.map(Hashed.apply)))
                 else
                   complete(Hierarchy(node.name, node.fullPath.mkString("/"), entries.toVector.sortBy(_._1), children.map(c => c._1 -> c._2.numEntries).toVector.sorted))
-              }
-            }
-          case None => reject
-        }
+              },
+              method(ServerRoutes.PROPFIND) {
+                val xml =
+                  <d:multistatus xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:d="DAV:">
+                    <d:response>
+                      <d:href>/by-date/{ node.fullPath.mkString("/") }/</d:href>
+                      <d:propstat>
+                        <d:prop>
+                          <d:resourcetype><d:collection/></d:resourcetype>
+                          <d:getcontentlength/>
+                          <d:getetag/>
+                          <d:displayname>{ node.name }</d:displayname>
+                          <d:getcontenttype>text/html</d:getcontenttype>
+                          <d:getlastmodified>Tue, 03 Nov 2020 21:11:43 GMT</d:getlastmodified>
+                          <d:creationdate/>
+                        </d:prop>
+                        <d:status>HTTP/1.1 200 OK</d:status>
+                      </d:propstat>
+                    </d:response>
+                    {
+                      for ((name, node) <- children) yield {
+                        <d:response>
+                          <d:href>/by-date/{ node.fullPath.mkString("/") }/</d:href>
+                          <d:propstat>
+                            <d:prop>
+                              <d:resourcetype><d:collection/></d:resourcetype>
+                              <d:getcontentlength/>
+                              <d:getetag/>
+                              <d:displayname>{ name }</d:displayname>
+                              <d:getcontenttype/>
+                              <d:getlastmodified/>
+                              <d:creationdate/>
+                            </d:prop>
+                            <d:status>HTTP/1.1 200 OK</d:status>
+                          </d:propstat>
+                        </d:response>
+                      }
+                    }
+                    {
+                      for (entry <- entries) yield {
+                        <d:response>
+                          <d:href>{ entry._2.head.asHexString }.jpeg</d:href>
+                          <d:propstat>
+                            <d:prop>
+                              <d:resourcetype/>
+                              <d:getcontentlength>{ app.config.fileInfoOf(entry._2.head).repoFile.length }</d:getcontentlength>
+                              <d:getetag/>
+                              <d:displayname>{ entry._1 }.jpeg</d:displayname>
+                              <d:getcontenttype>image/jpeg</d:getcontenttype>
+                              <d:getlastmodified>Tue, 03 Nov 2020 21:11:43 GMT</d:getlastmodified>
+                              <d:creationdate/>
+                            </d:prop>
+                            <d:status>HTTP/1.1 200 OK</d:status>
+                          </d:propstat>
+                        </d:response>
+                      }
+                    }
+                  </d:multistatus>
 
-      concat(
-        pathEndOrSingleSlash(forNode(access.root.map(Some(_)))),
-        path(Segments./) { segments =>
-          forNode(access.byPrefix(segments.toVector))
+                import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport._
+                mapResponse(_.addHeader(RawHeader("DAV", "1, 2")).withStatus(StatusCodes.MultiStatus)) {
+                  complete(xml)
+                }
+              },
+              method(HttpMethods.OPTIONS) {
+                complete(HttpResponse(headers =
+                  headers.Allow(HttpMethods.GET, ServerRoutes.PROPFIND, HttpMethods.OPTIONS) ::
+                    RawHeader("DAV", "1, 2") :: Nil))
+              },
+            )
+          }
+        case None => reject
+      }
+
+    concat(
+      pathEndOrSingleSlash(forNode(access.root.map(Some(_)))),
+      path(Segments ~ PathMatchers.Slash.?) { segments => forNode(access.byPrefix(segments.toVector)) },
+      pathSuffix(FileInfoByDefaultHash ~ ".jpeg".?) { info =>
+        get {
+          getFromFile(info.repoFile)
         }
-      )
-    }
+      }
+    )
+  }
 
   lazy val auxiliary: Route =
     getFromResourceDirectory("web")

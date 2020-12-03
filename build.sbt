@@ -41,6 +41,8 @@ lazy val web = project
     libraryDependencies ++= Seq(
       "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV,
+      "com.typesafe.akka" %% "akka-http-xml" % akkaHttpV,
+      "org.scala-lang.modules" %% "scala-xml" % "2.0.0-M3",
     ),
 
     // Fix broken watchSources support in play/twirl, https://github.com/playframework/twirl/issues/186
