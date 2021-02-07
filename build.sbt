@@ -1,8 +1,8 @@
-val scalaV = "2.13.3"
-val akkaV = "2.6.7"
-val akkaHttpV = "10.2.0-RC1"
+val scalaV = "2.13.4"
+val akkaV = "2.6.12"
+val akkaHttpV = "10.2.3"
 
-val scalaTestV = "3.1.2"
+val scalaTestV = "3.2.3"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
@@ -27,8 +27,8 @@ lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "com.drewnoakes" % "metadata-extractor" % "2.14.0",
-      "net.java.dev.jna" % "jna" % "5.5.0",
+      "com.drewnoakes" % "metadata-extractor" % "2.15.0",
+      "net.java.dev.jna" % "jna" % "5.6.0",
     ),
 
     javaOptions in run += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
