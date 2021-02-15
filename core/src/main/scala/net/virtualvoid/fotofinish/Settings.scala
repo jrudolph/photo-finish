@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish
 
 import java.io.File
-
 import akka.http.scaladsl.model.DateTime
+import com.typesafe.config.ConfigFactory
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.SimpleKind
 
@@ -67,6 +67,8 @@ object Settings {
       DeletedMetadata(reason, SimpleKind(original.kind.kind, original.kind.version), filteredOut = true)
     )
 
+  val fixedPoolSize = ConfigFactory.defaultApplication().getInt("extraction-dispatcher.thread-pool-executor.fixed-pool-size")
+
   val config =
     RepositoryConfig(
       repo,
@@ -77,7 +79,7 @@ object Settings {
       knownMetadataKinds,
       (removeLongHashEntries _).andThen(removeThumbnails),
       autoExtractors,
-      8,
+      fixedPoolSize,
       120.seconds,
       0
     )
