@@ -29,6 +29,7 @@ object MetadataJournal {
    */
   def apply(config: ProcessConfig)(implicit system: ActorSystem): MetadataJournal = {
     import system.dispatcher
+    import config.envelopeFormat
 
     val killSwitch = KillSwitches.shared("kill-journal")
     val seqNrFile = new File(config.metadataDir, "metadata.seqnr.txt")
@@ -73,7 +74,7 @@ object MetadataJournal {
         .mapAsync(8) { lines =>
           Future {
             lines
-              .flatMap(bs => readJournalEntry(config, bs.utf8String))
+              .flatMap(bs => readJournalEntry(bs.utf8String))
           }
         }
         .mapConcat(identity)
@@ -175,8 +176,7 @@ object MetadataJournal {
     }
   }
 
-  private def readJournalEntry(config: ProcessConfig, entry: String): Option[MetadataEnvelope] = {
-    import config.entryFormat
+  private def readJournalEntry(entry: String)(implicit envelopeFormat: JsonFormat[MetadataEnvelope]): Option[MetadataEnvelope] = {
     try Some(entry.parseJson.convertTo[MetadataEnvelope])
     catch {
       case NonFatal(ex) =>

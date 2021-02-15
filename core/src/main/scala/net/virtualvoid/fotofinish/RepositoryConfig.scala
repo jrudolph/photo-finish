@@ -107,6 +107,9 @@ final case class RepositoryConfig(
     MetadataEnvelope(simpleJournalEntry.seqNr, resolve(simpleJournalEntry.entry))
 
   import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.simpleEntryFormat
-  implicit def entryFormat: JsonFormat[MetadataEntry] =
+  implicit lazy val entryFormat: JsonFormat[MetadataEntry] =
     JsonExtra.deriveFormatFrom[SimpleEntry](SimpleEntry(_), resolve(_))
+
+  implicit lazy val envelopeFormat: JsonFormat[MetadataEnvelope] =
+    MetadataEnvelope.envelopeFormat(entryFormat)
 }
