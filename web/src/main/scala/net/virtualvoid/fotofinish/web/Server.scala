@@ -110,15 +110,23 @@ private[web] class ServerRoutes(app: MetadataApp) {
                     },
                     path("info"./) {
                       onSuccess(app.faceApi.similarFacesTo(fileInfo.hash, i)) { neighbors =>
-                        def hashInfo(hash: Hash): Future[String] =
+                        def dateTaken(hash: Hash): Future[Option[DateTime]] =
                           app.metadataFor(Hashed(hash)).map { meta =>
-                            MetadataShortcuts.DateTaken(meta).fold("")(dt => s"${dt.fromNow} $dt ")
+                            MetadataShortcuts.DateTaken(meta)
                           }
-                        def title(entry: (Hash, Int, Float)): Future[String] =
-                          hashInfo(entry._1).map(hi => s"${hi}distance: ${entry._3}")
-                        def mapEntry(entry: (Hash, Int, Float)): Future[(Hash, Int, Float, String)] = title(entry).map(t => (entry._1, entry._2, entry._3, t))
 
-                        onSuccess(Future.traverse(neighbors)(mapEntry)) { annotatedNeighbors =>
+                        def title(entry: (Hash, Int, Float), dateTaken: Option[DateTime]): String = {
+                          val dateString = dateTaken.fold("")(dt => s"${dt.fromNow} $dt ")
+                          s"${dateString}distance: ${entry._3}"
+                        }
+
+                        def annotateNeighbor(entry: (Hash, Int, Float)): Future[FaceNeighbor] =
+                          dateTaken(entry._1).map { dateTaken =>
+                            val t = title(entry, dateTaken)
+                            FaceNeighbor(entry._1, entry._2, entry._3, t)
+                          }
+
+                        onSuccess(Future.traverse(neighbors)(annotateNeighbor)) { annotatedNeighbors =>
                           complete {
                             MetadataShortcuts.Faces(meta).lift(i).map { thisFace =>
                               FaceInfoPage(thisFace, annotatedNeighbors)
