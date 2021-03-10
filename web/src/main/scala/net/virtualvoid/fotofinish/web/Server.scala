@@ -5,9 +5,9 @@ import java.io.File
 import akka.Done
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.{ ContentType, DateTime, headers, HttpEntity, HttpMethod, HttpMethods, HttpResponse, MediaTypes, StatusCodes, Uri }
+import akka.http.scaladsl.model.{ ContentType, DateTime, HttpEntity, HttpMethod, HttpMethods, HttpResponse, MediaTypes, StatusCodes, Uri, headers }
 import headers.RawHeader
-import akka.http.scaladsl.server.{ Directive, Directive0, ExceptionHandler, PathMatcher, PathMatchers, PathMatcher1, Route, RouteResult }
+import akka.http.scaladsl.server.{ Directive, Directive0, ExceptionHandler, PathMatcher, PathMatcher1, PathMatchers, Route, RouteResult }
 import akka.http.scaladsl.settings.ServerSettings
 import akka.stream.IOResult
 import akka.stream.scaladsl.{ FileIO, Flow, Keep }
@@ -19,8 +19,10 @@ import html._
 import metadata._
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.process.{ HierarchyAccess, Node }
+import net.virtualvoid.fotofinish.web.ServerRoutes.PROPFIND
 
 import scala.annotation.tailrec
+import scala.collection.immutable.VectorBuilder
 import scala.concurrent.Future
 import scala.util.Success
 import scala.util.control.NonFatal
@@ -33,7 +35,7 @@ object Server extends App {
   val app = MetadataApp(Settings.config)
   val binding = Http().bindAndHandle(
     ServerRoutes.route(app),
-    "localhost", 8654, settings = settings
+    "0.0.0.0", 8654, settings = settings
   )
   binding.onComplete { res =>
     println(s"Binding now $res")
@@ -207,7 +209,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
       ctx => innerR(ctx).map {
         case r @ RouteResult.Complete(res) =>
           val req = ctx.request
-          ctx.log.info(s"${req.method} ${req.uri} => ${res.status}")
+          ctx.log.info(s"${req.method.name} ${req.uri} => ${res.status}")
           r
       }
     }
@@ -264,17 +266,17 @@ private[web] class ServerRoutes(app: MetadataApp) {
                       }
                     }
                     {
-                      for (entry <- entries) yield {
+                      for { entry <- entries; info = app.config.fileInfoOf(entry._2.head) } yield {
                         <d:response>
                           <d:href>{ entry._2.head.asHexString }.jpeg</d:href>
                           <d:propstat>
                             <d:prop>
                               <d:resourcetype/>
-                              <d:getcontentlength>{ app.config.fileInfoOf(entry._2.head).repoFile.length }</d:getcontentlength>
+                              <d:getcontentlength>{ info.repoFile.length }</d:getcontentlength>
                               <d:getetag/>
                               <d:displayname>{ entry._1 }.jpeg</d:displayname>
                               <d:getcontenttype>image/jpeg</d:getcontenttype>
-                              <d:getlastmodified>Tue, 03 Nov 2020 21:11:43 GMT</d:getlastmodified>
+                              <d:getlastmodified>{ DateTime(info.repoFile.lastModified()).toRfc1123DateTimeString() }</d:getlastmodified>
                               <d:creationdate/>
                             </d:prop>
                             <d:status>HTTP/1.1 200 OK</d:status>
@@ -286,7 +288,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
 
                 import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport._
                 mapResponse(_.addHeader(RawHeader("DAV", "1, 2")).withStatus(StatusCodes.MultiStatus)) {
-                  complete(xml)
+                  complete(scala.xml.Utility.trim(xml))
                 }
               },
               method(HttpMethods.OPTIONS) {
@@ -303,9 +305,54 @@ private[web] class ServerRoutes(app: MetadataApp) {
       pathEndOrSingleSlash(forNode(access.root.map(Some(_)))),
       path(Segments ~ PathMatchers.Slash.?) { segments => forNode(access.byPrefix(segments.toVector)) },
       pathSuffix(FileInfoByDefaultHash ~ ".jpeg".?) { info =>
-        get {
-          getFromFile(info.repoFile)
-        }
+        concat(
+          get {
+            getFromFile(info.repoFile)
+          },
+          (method(PROPFIND) & extractRequest & extractUnmatchedPath) { (req, unmatched) =>
+            def segs(path: Uri.Path, res: VectorBuilder[String]): Vector[String] = path match {
+              case Uri.Path.Empty               => res.result()
+              case Uri.Path.Segment(head, tail) => segs(tail.tail, res += head)
+              case _                            => segs(path.tail, res)
+            }
+            def findEntryName(segments: Vector[String], hash: Hash): Future[String] =
+              for {
+                Some(node) <- access.byPrefix(segments)
+                entries <- node.entries
+              } yield entries.find(_._2.exists(_ == hash)).get._1 // FIXME
+
+            val segments = segs(unmatched, new VectorBuilder)
+            onSuccess(findEntryName(segments, info.hash)) { entryName =>
+              val xml =
+                <d:multistatus xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:d="DAV:">
+                  <d:response>
+                    <d:href>
+                      { req.uri.path }
+                    </d:href>
+                    <d:propstat>
+                      <d:prop>
+                        <d:resourcetype/>
+                        <d:getcontentlength>
+                          { info.repoFile.length }
+                        </d:getcontentlength>
+                        <d:getetag/>
+                        <d:displayname>{ entryName }.jpeg</d:displayname>
+                        <d:getcontenttype>image/jpeg</d:getcontenttype>
+                        <d:getlastmodified>{ DateTime(info.repoFile.lastModified()).toRfc1123DateTimeString() }</d:getlastmodified>
+                        <d:creationdate/>
+                      </d:prop>
+                      <d:status>HTTP/1.1 200 OK</d:status>
+                    </d:propstat>
+                  </d:response>
+                </d:multistatus>
+
+              import akka.http.scaladsl.marshallers.xml.ScalaXmlSupport._
+              mapResponse(_.addHeader(RawHeader("DAV", "1, 2")).withStatus(StatusCodes.MultiStatus)) {
+                complete(xml)
+              }
+            }
+          }
+        )
       }
     )
   }
