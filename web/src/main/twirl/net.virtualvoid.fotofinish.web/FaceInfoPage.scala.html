@@ -8,6 +8,30 @@
 
 <img src=".." width="150px"/>
 
+<h3>@{neighbors.size} Neighbors by Date Taken</h3>
+
+<div>
+    @for(
+    (year, yearNs) <- neighbors.groupBy(_.dateTakenOrStartOfEpoch.year).toVector.sortBy(-_._1)
+    ) {
+        <h4>@year</h4>
+        @for(
+            (month, ns) <- yearNs.groupBy(_.dateTakenOrStartOfEpoch.month).toVector.sortBy(-_._1)
+        ) {
+            <h4>@{ns.head.dateTakenOrStartOfEpoch.monthStr}</h4>
+            @for(
+            n <- ns.sortBy(_.dateTakenOrStartOfEpoch).reverse;
+            hash = n.targetHash;
+            idx = n.faceIdx;
+            dist = n.distance;
+            title = n.title
+            ) {
+            <a href="/images/sha-512-t160/@{hash.asHexString}/face/@idx/info/"><img src="/images/sha-512-t160/@{hash.asHexString}/face/@idx" width="150px" title="@title" loading="lazy"/></a>
+            }
+        }
+    }
+</div>
+
 <h3>@{neighbors.size} Neighbors by distance</h3>
 
 <div>

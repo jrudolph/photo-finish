@@ -123,7 +123,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
                         def annotateNeighbor(entry: (Hash, Int, Float)): Future[FaceNeighbor] =
                           dateTaken(entry._1).map { dateTaken =>
                             val t = title(entry, dateTaken)
-                            FaceNeighbor(entry._1, entry._2, entry._3, t)
+                            FaceNeighbor(entry._1, entry._2, entry._3, t, dateTaken)
                           }
 
                         onSuccess(Future.traverse(neighbors)(annotateNeighbor)) { annotatedNeighbors =>
