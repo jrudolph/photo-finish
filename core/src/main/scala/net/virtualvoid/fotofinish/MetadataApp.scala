@@ -24,6 +24,7 @@ trait MetadataApp {
   def completeIdPrefix(prefix: Id): Future[Option[Id]]
   def extractorStatus(): Future[Seq[(String, Map[String, Int])]]
   def faceApi: SimilarFaces
+  def phashApi: SimilarImages
 
   def mostRecentlyFoundFaces(): Future[Seq[(Hash, Int, DateTime)]]
 
@@ -89,6 +90,7 @@ object MetadataApp {
         override def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] = Future.successful(Vector.empty)
       }*/
       val faceApi = runProcess(new PerFaceDistanceCollector(0.45f).toProcessSqlite)
+      val phashApi = runProcess(new PHashDistanceCollector(8).toProcessSqlite)
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()

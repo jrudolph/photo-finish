@@ -1,7 +1,7 @@
-@import net.virtualvoid.fotofinish.FileInfo
+@import net.virtualvoid.fotofinish.{ FileInfo, Hash }
 @import net.virtualvoid.fotofinish.metadata.{ Metadata, MetadataShortcuts }
 
-@(fileInfo: FileInfo, metadata: Metadata, metadataFields: Seq[(String, Html)])
+@(fileInfo: FileInfo, metadata: Metadata, metadataFields: Seq[(String, Html)], imageNeighbors: Seq[(Hash, Int)])
 
 <img class="materialboxed" src="oriented" height="750px" />
 
@@ -21,6 +21,17 @@
 }
 </table>
 
+<h2>Similar Images</h2>
+<div>
+    @for((hash, dist) <- imageNeighbors.sortBy(_._2)) {
+    <a href="/images/sha-512-t160/@{hash.asHexString}/">
+        <img
+            src="/images/sha-512-t160/@{hash.asHexString}/thumbnail" width="150px"
+            title="Distance: @dist"
+        />
+    </a>
+    }
+</div>
 
 <h2>Faces</h2>
 

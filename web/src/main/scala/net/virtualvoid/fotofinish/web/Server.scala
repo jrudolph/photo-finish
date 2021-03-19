@@ -139,7 +139,9 @@ private[web] class ServerRoutes(app: MetadataApp) {
                 },
                 redirectToTrailingSlashIfMissing(StatusCodes.Found) {
                   pathSingleSlash {
-                    complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta)))
+                    onSuccess(app.phashApi.similarImagesTo(fileInfo.hash)) { similar =>
+                      complete(ImageInfo(fileInfo, meta, fields(fileInfo, meta), similar))
+                    }
                   }
                 }
               )

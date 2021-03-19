@@ -33,6 +33,7 @@ object Settings {
     FaceData,
     HashData,
     FFProbeData,
+    PHashData,
     DeletedMetadata,
   )
 
@@ -41,6 +42,7 @@ object Settings {
     ExifBaseDataExtractor.instance,
     HashDataExtractor.instance,
     FFProbeDataExtractor.instance,
+    PHashDataExtractor.instance,
   //FaceDataExtractor.instance,
   )
 
