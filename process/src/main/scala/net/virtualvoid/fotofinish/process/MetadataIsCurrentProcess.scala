@@ -127,7 +127,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
         if (existing.kind.kind == entry.kind.kind && existing.creation.created < entry.creation.created) entry
         else existing
       }
-      Ready(newDeps)
+      handleReady(entry.target.hash, newDeps)
     }
 
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
@@ -147,7 +147,16 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
       require(
         !(entry.kind.kind == extractor.metadataKind.kind && entry.kind.version == extractor.metadataKind.version),
         s"Unexpected metadata entry found where previously precondition was not met because of [$cause]")
-      this
+
+      val newDeps = dependencies.map { existing =>
+        // FIXME: is take latest the only reasonable strategy?
+        if (existing.kind.kind == entry.kind.kind && existing.creation.created < entry.creation.created) entry
+        else existing
+      }
+      if (newDeps != dependencies)
+        handleReady(entry.target.hash, newDeps)
+      else
+        this
     }
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
@@ -155,7 +164,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 6
+  def version: Int = 7
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
