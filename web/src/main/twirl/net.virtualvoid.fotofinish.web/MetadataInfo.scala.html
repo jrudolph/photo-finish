@@ -1,0 +1,22 @@
+@import spray.json._
+@import net.virtualvoid.fotofinish.{ FileInfo, Hash }
+@import net.virtualvoid.fotofinish.metadata.{ Metadata, MetadataShortcuts }
+
+@(fileInfo: FileInfo, metadata: Metadata)
+
+<table>
+    <tr>
+        <th>Kind</th>
+        <th>Version</th>
+        <th>Created at</th>
+        <td>Data</td>
+    </tr>
+@for(entry <- metadata.entries.sortBy(_.kind.kind)) {
+    <tr>
+        <td>@{entry.kind.kind}</td>
+        <td>@{entry.kind.version}</td>
+        <td>@{entry.creation.created}</td>
+        <td><pre>@{entry.value.toJson(entry.kind.jsonFormat).prettyPrint}</pre></td>
+    </tr>
+}
+</table>
