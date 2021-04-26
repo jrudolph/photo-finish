@@ -150,7 +150,11 @@ object FaceDataExtractor {
 
       override def upgradeExisting(existing: MetadataEntry.Aux[FaceData], dependencies: Vector[MetadataEntry]): MetadataExtractor.Upgrade = {
         val orientation = dependencies(1).value.asInstanceOf[ExifBaseData].orientation
-        if (orientation != existing.value.orientation) MetadataExtractor.RerunExtractor
+        val needsRerun = (orientation, existing.value.orientation) match {
+          case (Some(Orientation.Normal), None) => false // fine, we didn't note any orientation but also we won't do better than before
+          case (x, y)                           => x != y
+        }
+        if (needsRerun) MetadataExtractor.RerunExtractor
         else MetadataExtractor.Keep
       }
     }
