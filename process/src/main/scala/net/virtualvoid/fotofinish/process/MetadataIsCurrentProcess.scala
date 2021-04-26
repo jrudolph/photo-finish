@@ -91,13 +91,13 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
             case MetadataExtractor.Keep => Calculated(ExtractorVersion, deps)
             //case MetadataExtractor.PublishUpgraded(newEntry) => ??? // FIXME: create new state that can create a simple workitem to publish new entry
             case MetadataExtractor.RerunExtractor =>
-              handleReady(entry.target.hash, deps)
+              handleReady(entry.target.hash, deps, Some(entry))
           }
       }
-    def handleReady(hash: Hash, deps: Vector[MetadataEntry]): HashState =
+    def handleReady(hash: Hash, deps: Vector[MetadataEntry], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]): HashState =
       extractor.precondition(hash, deps) match {
         case None        => Ready(deps)
-        case Some(cause) => PreConditionNotMet(cause, deps)
+        case Some(cause) => PreConditionNotMet(cause, deps, upgradeExisting)
       }
   }
   case class CollectingDependencies(dependencyState: Vector[DependencyState], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]) extends HashState {
@@ -112,7 +112,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
         val deps = newL.map(_.get)
         upgradeExisting match {
           case Some(existing) => handleUpgrade(existing, deps)
-          case None           => handleReady(entry.target.hash, deps)
+          case None           => handleReady(entry.target.hash, deps, None)
         }
       } else CollectingDependencies(newL, upgradeExisting)
     }
@@ -127,7 +127,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
         if (existing.kind.kind == entry.kind.kind && existing.creation.created < entry.creation.created) entry
         else existing
       }
-      handleReady(entry.target.hash, newDeps)
+      handleReady(entry.target.hash, newDeps, None)
     }
 
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
@@ -142,7 +142,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
 
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
   }
-  case class PreConditionNotMet(cause: String, dependencies: Vector[MetadataEntry]) extends HashState {
+  case class PreConditionNotMet(cause: String, dependencies: Vector[MetadataEntry], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]) extends HashState {
     override def handle(entry: MetadataEntry): HashState = {
       require(
         !(entry.kind.kind == extractor.metadataKind.kind && entry.kind.version == extractor.metadataKind.version),
@@ -154,7 +154,10 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
         else existing
       }
       if (newDeps != dependencies)
-        handleReady(entry.target.hash, newDeps)
+        upgradeExisting match { // FIXME: DRY with CollectingDependencies
+          case Some(existing) => handleUpgrade(existing, newDeps)
+          case None           => handleReady(entry.target.hash, newDeps, None)
+        }
       else
         this
     }
@@ -164,7 +167,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
   type Api = MetadataExtractionScheduler
 
   override val id: String = s"net.virtualvoid.fotofinish.metadata[${extractor.kind}]"
-  def version: Int = 7
+  def version: Int = 8
 
   def initialPerKeyState(id: Id): HashState = Initial
   def processIdEvent(id: Id, event: MetadataEnvelope): Effect =
@@ -211,7 +214,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
     implicit def readyFormat: JsonFormat[Ready] = jsonFormat1(Ready.apply)
     implicit def scheduledFormat: JsonFormat[Scheduled] = jsonFormat1(Scheduled.apply)
     implicit def calculatedFormat: JsonFormat[Calculated] = jsonFormat2(Calculated.apply)
-    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat2(PreConditionNotMet.apply)
+    implicit def preconditionNotMetFormat: JsonFormat[PreConditionNotMet] = jsonFormat3(PreConditionNotMet.apply)
     implicit def hashStateFormat: JsonFormat[HashState] = new JsonFormat[HashState] {
       import net.virtualvoid.fotofinish.util.JsonExtra._
       override def read(json: JsValue): HashState =
