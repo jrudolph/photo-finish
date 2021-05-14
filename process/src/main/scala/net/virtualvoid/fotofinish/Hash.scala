@@ -80,6 +80,12 @@ object HashAlgorithm {
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
   lazy val asHexString: String = data.map(_ formatted "%02x").mkString
 
+  override def hashCode(): Int = // build hashcode directly from first 4 bytes of hash data
+    ((data(0) & 0xff) << 24) |
+      ((data(1) & 0xff) << 16) |
+      ((data(2) & 0xff) << 8) |
+      ((data(3) & 0xff))
+
   override def toString: String = {
     val sb = new StringBuilder(100)
     sb ++= hashAlgorithm.name

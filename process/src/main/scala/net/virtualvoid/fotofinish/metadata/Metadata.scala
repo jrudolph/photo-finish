@@ -78,6 +78,7 @@ object Id {
     def kind: String = hash.hashAlgorithm.name
     def stringRepr: String = hash.asHexString
 
+    override def hashCode(): Int = hash.hashCode()
     override def toString: String = hash.toString
   }
   // final case class ByUUID(uuid: UUID) extends Id
