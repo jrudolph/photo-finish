@@ -1,10 +1,16 @@
 package net.virtualvoid.fotofinish
 
-import java.util.concurrent.atomic.AtomicInteger
+import akka.Done
+import akka.actor.ActorSystem
+import akka.stream.scaladsl.Source
 
+import java.util.concurrent.atomic.AtomicInteger
+import scala.concurrent.{Await, Future}
 import scala.util.Try
 
 object RepositoryValidator extends App {
+  implicit val system = ActorSystem()
+  import system.dispatcher
   // Things to test:
   //   * Hashes are correct (takes a long time)
   //   * All per-repo-file metadata can be read and is for the given file
@@ -30,13 +36,14 @@ object RepositoryValidator extends App {
   val sorted = map.toVector.sortBy(_._1).map(_._2)
 
   //runCheck("Per-file metadata", checkMetadata)
-  runCheck("Validating file hashes", checkHash)
+  import scala.concurrent.duration._
+  Await.result(runCheck("Validating file hashes", checkHash), 30.minutes)
+  Await.result(system.terminate(), 1.minute)
 
-  def runCheck(what: String, check: FileInfo => Try[Unit]): Unit = {
+  def runCheck(what: String, check: FileInfo => Try[Unit]): Future[Done] = {
     println(s"Starting check [$what]")
-    sorted
-      .iterator
-      .map(check)
+    Source(sorted)
+      .mapAsyncUnordered(16)(fi => Future(check(fi)))
       .map {
         val i = new AtomicInteger()
         val started = System.nanoTime()
@@ -57,6 +64,6 @@ object RepositoryValidator extends App {
         }
       }
       .filter(_.isFailure)
-      .foreach(println)
+      .runForeach(println)
   }
 }
