@@ -12,7 +12,7 @@ import net.virtualvoid.fotofinish.metadata._
 object Settings {
 
   val repo = new File("/home/johannes/Fotos/tmp/repo")
-  val meta = new File("/home/johannes/git/self/photo-finish/tmprepo2/")
+  val meta = new File("/home/johannes/git/self/photo-finish/tmprepo3/")
   val linkDir = new File("/home/johannes/FotosSorted")
 
   /*val repo = new File("/home/johannes/git/self/photo-finish/tmprepo/objects")
