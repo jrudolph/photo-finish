@@ -1,8 +1,8 @@
-val scalaV = "2.13.4"
-val akkaV = "2.6.12"
-val akkaHttpV = "10.2.3"
+val scalaV = "2.13.7"
+val akkaV = "2.6.17"
+val akkaHttpV = "10.2.7"
 
-val scalaTestV = "3.2.3"
+val scalaTestV = "3.2.10"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
@@ -27,12 +27,12 @@ lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "com.drewnoakes" % "metadata-extractor" % "2.15.0",
-      "net.java.dev.jna" % "jna" % "5.6.0",
+      "com.drewnoakes" % "metadata-extractor" % "2.16.0",
+      "net.java.dev.jna" % "jna" % "5.10.0",
     ),
 
-    javaOptions in run += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
-    javaOptions in reStart += s"-Djna.library.path=${(baseDirectory in rootRef).value.getAbsolutePath}",
+    run / javaOptions += s"-Djna.library.path=${(rootRef / baseDirectory).value.getAbsolutePath}",
+    reStart / javaOptions += s"-Djna.library.path=${(rootRef / baseDirectory).value.getAbsolutePath}",
   )
 
 lazy val web = project
@@ -47,7 +47,7 @@ lazy val web = project
     // watch sources support
     watchSources +=
       WatchSource(
-        (sourceDirectory in TwirlKeys.compileTemplates).value,
+        (TwirlKeys.compileTemplates / sourceDirectory).value,
         "*.scala.*",
         (excludeFilter in Global).value
       ),
@@ -62,7 +62,7 @@ lazy val web = project
 
 lazy val docs = project
   .settings(
-    paradoxMaterialTheme in Compile := {
+    Compile / paradoxMaterialTheme := {
       ParadoxMaterialTheme()
         // choose from https://jonas.github.io/paradox-material-theme/getting-started.html#changing-the-color-palette
         .withColor("light-green", "amber")
@@ -77,7 +77,7 @@ lazy val docs = project
     },
 
     paradoxProperties ++= Map(
-      "github.base_url" -> (paradoxMaterialTheme in Compile).value.properties.getOrElse("repo", "")
+      "github.base_url" -> (Compile / paradoxMaterialTheme).value.properties.getOrElse("repo", "")
     )
   )
   .enablePlugins(ParadoxMaterialThemePlugin)
@@ -100,12 +100,12 @@ lazy val basicSettings = Seq(
     "org.scalatest" %% "scalatest" % scalaTestV % "test",
   ),
 
-  fork in run := true,
-  javaOptions in run ++= Seq(
+  run / fork := true,
+  run / javaOptions ++= Seq(
     "-Djna.library.path=/home/johannes/git/self/photo-finish",
     "-XX:+PreserveFramePointer",
     "-XX:+UnlockDiagnosticVMOptions",
     "-XX:+DebugNonSafepoints",
   ),
-  baseDirectory in reStart := (baseDirectory in rootRef).value,
+  reStart / baseDirectory := (rootRef / baseDirectory).value,
 )
