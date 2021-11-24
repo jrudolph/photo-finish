@@ -5,7 +5,7 @@ import akka.actor.ActorSystem
 import akka.stream.scaladsl.Source
 
 import java.util.concurrent.atomic.AtomicInteger
-import scala.concurrent.{Await, Future}
+import scala.concurrent.{ Await, Future }
 import scala.util.Try
 
 object RepositoryValidator extends App {
