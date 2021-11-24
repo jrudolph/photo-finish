@@ -42,7 +42,7 @@ lazy val web = project
       "com.typesafe.akka" %% "akka-stream" % akkaV,
       "com.typesafe.akka" %% "akka-http" % akkaHttpV,
       "com.typesafe.akka" %% "akka-http-xml" % akkaHttpV,
-      "org.scala-lang.modules" %% "scala-xml" % "2.0.0-M3",
+      "org.scala-lang.modules" %% "scala-xml" % "2.0.1",
     ),
 
     // Fix broken watchSources support in play/twirl, https://github.com/playframework/twirl/issues/186
@@ -110,4 +110,5 @@ lazy val basicSettings = Seq(
     "-XX:+DebugNonSafepoints",
   ),
   reStart / baseDirectory := (rootRef / baseDirectory).value,
+  dependencyOverrides += "org.scala-lang.modules" %% "scala-xml" % "2.0.1", // to appease sbt
 )
