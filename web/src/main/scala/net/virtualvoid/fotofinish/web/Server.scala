@@ -230,7 +230,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
               },
               method(ServerRoutes.PROPFIND) {
                 val xml =
-                  <d:multistatus xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:d="DAV:">
+                  <d:multistatus xmlns:d="DAV:">
                     <d:response>
                       <d:href>/by-date/{ node.fullPath.mkString("/") }/</d:href>
                       <d:propstat>
@@ -324,7 +324,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
             val segments = segs(unmatched, new VectorBuilder)
             onSuccess(findEntryName(segments, info.hash)) { entryName =>
               val xml =
-                <d:multistatus xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:card="urn:ietf:params:xml:ns:carddav" xmlns:d="DAV:">
+                <d:multistatus xmlns:d="DAV:">
                   <d:response>
                     <d:href>
                       { req.uri.path }
