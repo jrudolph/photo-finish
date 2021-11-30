@@ -136,6 +136,12 @@ private[web] class ServerRoutes(app: MetadataApp) {
                     }
                   )
                 },
+                (path("rate") & post) {
+                  formField("rating".as[Int]) { rating =>
+                    app.userAction("jr").targetting(fileInfo.id).rate(rating)
+                    complete("OK")
+                  }
+                },
                 path("metadata") {
                   complete(MetadataInfo(fileInfo, meta))
                 },

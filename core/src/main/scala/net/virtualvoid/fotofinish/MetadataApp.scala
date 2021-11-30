@@ -3,7 +3,7 @@ package net.virtualvoid.fotofinish
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model.DateTime
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind }
+import net.virtualvoid.fotofinish.metadata.{ CreationInfo, ExtractionContext, FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind, RatingData, TagAdded, TagData, TagRemoved, User }
 import net.virtualvoid.fotofinish.process._
 import spray.json.JsonFormat
 
@@ -32,7 +32,18 @@ trait MetadataApp {
   def byYearMonth: HierarchyAccess[String]
   def byOriginalFileName: HierarchyAccess[String]
 
+  def userAction(userId: String): UserAction
+
   def aggregation[S: JsonFormat](id: String, version: Int, kind: MetadataKind, initial: S)(f: (S, kind.T) => S): () => Future[S]
+}
+
+trait ObjectAction {
+  def addTag(tag: String): Unit
+  def removeTag(tag: String): Unit
+  def rate(rating: Int, comment: String = ""): Unit
+}
+trait UserAction {
+  def targetting(target: Id): ObjectAction
 }
 
 object MetadataApp {
@@ -99,6 +110,23 @@ object MetadataApp {
       }*/
       val faceApi = runProcess(new PerFaceDistanceCollector(0.45f).toProcessSqlite)
       val phashApi = runProcess(new PHashDistanceCollector(8).toProcessSqlite)
+
+      override def userAction(userId: String): UserAction = new UserAction {
+        override def targetting(target: Id): ObjectAction = new ObjectAction {
+          override def addTag(tag: String): Unit = emit(TagData, TagData(TagAdded(tag) :: Nil))
+          override def removeTag(tag: String): Unit = emit(TagData, TagData(TagRemoved(tag) :: Nil))
+          override def rate(rating: Int, comment: String): Unit = emit(RatingData, RatingData(rating, comment))
+
+          private def emit[T](kind: MetadataKind.Aux[T], data: T): Unit = {
+            val event = MetadataEntry(
+              target, Vector.empty, kind,
+              CreationInfo(DateTime.now, inferred = false, User(userId)),
+              data
+            )
+            journal.emit(event)
+          }
+        }
+      }
 
       def completeIdPrefix(prefix: Id): Future[Option[Id]] =
         knownObjects()

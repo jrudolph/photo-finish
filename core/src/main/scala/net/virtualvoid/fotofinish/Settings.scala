@@ -33,6 +33,8 @@ object Settings {
     HashData,
     FFProbeData,
     PHashData,
+    RatingData,
+    TagData,
     DeletedMetadata,
   )
 
