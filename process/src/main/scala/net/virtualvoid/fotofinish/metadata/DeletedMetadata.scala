@@ -8,7 +8,7 @@ case class DeletedMetadata(
     previousKind: SimpleKind,
     filteredOut:  Boolean
 )
-object DeletedMetadata extends MetadataKind.Impl[DeletedMetadata]("net.virtualvoid.fotofinish.metadata", 1) {
+object DeletedMetadata extends MetadataKind.Impl[DeletedMetadata]("net.virtualvoid.fotofinish.metadata.DeletedMetadata", 1) {
   import spray.json.DefaultJsonProtocol._
   import MetadataJsonProtocol.simpleKindFormat
   override implicit def jsonFormat: JsonFormat[DeletedMetadata] = jsonFormat3(DeletedMetadata.apply _)
