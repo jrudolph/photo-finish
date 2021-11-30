@@ -53,7 +53,7 @@ object IngestionController extends PerIdProcessWithNoGlobalState {
             Id.Hashed(hash),
             Vector.empty,
             IngestionData,
-            CreationInfo(DateTime.now, false, Ingestion),
+            CreationInfo(DateTime.now, inferred = false, Ingestion),
             newData
           ))
         } else {
