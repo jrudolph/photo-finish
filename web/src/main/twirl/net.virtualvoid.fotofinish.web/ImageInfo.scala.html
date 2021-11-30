@@ -23,6 +23,8 @@
 }
 </table>
 
+@if(imageNeighbors.nonEmpty) {
+
 <h2>Similar Images</h2>
 <div>
     @for((hash, dist) <- imageNeighbors.sortBy(_._2)) {
@@ -34,6 +36,10 @@
     </a>
     }
 </div>
+
+}
+
+@if(MetadataShortcuts.Faces(metadata).nonEmpty) {
 
 <h2>Faces</h2>
 
@@ -62,3 +68,5 @@
     </tr>
 }
 </table>
+
+}
