@@ -1,8 +1,8 @@
-val scalaV = "2.13.7"
-val akkaV = "2.6.17"
-val akkaHttpV = "10.2.7"
+val scalaV = "2.13.8"
+val akkaV = "2.6.18"
+val akkaHttpV = "10.2.9"
 
-val scalaTestV = "3.2.10"
+val scalaTestV = "3.2.11"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(core, web, docs)
