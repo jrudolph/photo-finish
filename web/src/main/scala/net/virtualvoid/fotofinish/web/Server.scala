@@ -29,10 +29,9 @@ object Server extends App {
   import system.dispatcher
 
   val app = MetadataApp(Settings.config)
-  val binding = Http().bindAndHandle(
-    ServerRoutes.route(app),
-    "localhost", 8654
-  )
+  val binding =
+    Http().newServerAt("localhost", 8654)
+      .bind(ServerRoutes.route(app))
   binding.onComplete { res =>
     println(s"Binding now $res")
   }

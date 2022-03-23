@@ -49,7 +49,7 @@ object ClusterTest extends App {
     Vector("/mnt/hd/fotos/tmp/repo/allmetadata.json.gz", "/mnt/hd/fotos/tmp/repo/net.virtualvoid.fotofinish.FaceData-v3.json.gz")
       .flatMap(loadFrom)
       .flatMap { e =>
-        val fileInfo = Settings.config.fileInfoOf(e.target)
+        val fileInfo = Settings.config.fileInfoOf(e.target.hash)
         e.value.faces.zipWithIndex.map {
           case (info, idx) => (fileInfo, info, idx)
         }

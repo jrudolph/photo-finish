@@ -41,7 +41,7 @@ object HashDataExtractor {
               } else {
                 val res =
                   HashData {
-                    HashTypes.lazyZip(mds.map(_.digest().map(_ formatted "%02x").mkString)).toMap
+                    HashTypes.lazyZip(mds.map(_.digest().map("%02x" format _).mkString)).toMap
                   }
                 res
               }

@@ -59,8 +59,6 @@ final case class RepositoryConfig(
     new File(storageDir, fileName)
   }
 
-  @deprecated // FIXME: Added for compatibility but should we really offer this?
-  def fileInfoOf(id: Id): FileInfo = fileInfoOf(id.hash)
   def fileInfoOf(hash: Hash): FileInfo =
     FileInfo(
       hash,

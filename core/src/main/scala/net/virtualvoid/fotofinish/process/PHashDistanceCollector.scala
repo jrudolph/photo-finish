@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish.process
 
 import net.virtualvoid.fotofinish.Hash
-import net.virtualvoid.fotofinish.metadata.{ FaceData, MetadataEntry, MetadataEnvelope, PHashData }
+import net.virtualvoid.fotofinish.metadata.{ MetadataEntry, MetadataEnvelope, PHashData }
 import spray.json.JsonFormat
 
 import scala.concurrent.{ ExecutionContext, Future }

@@ -46,7 +46,7 @@ object YearMonthHierarchy extends Hierarchy[String] {
 
   def extract(hash: Hash, entry: ExifBaseData): Vector[String] =
     entry.dateTaken match {
-      case Some(dateTime) => Vector(dateTime.year.toString, dateTime.month formatted "%02d", dateTime.toString)
+      case Some(dateTime) => Vector(dateTime.year.toString, "%02d" format dateTime.month, dateTime.toString)
       case None           => Vector("unknown", hash.asHexString)
     }
   def rootName: String = ""

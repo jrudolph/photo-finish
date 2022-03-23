@@ -5,11 +5,8 @@ import java.io.File
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.Source
 
-import scala.concurrent.duration._
-
 object StreamedScannerMain extends App {
   implicit val system = ActorSystem()
-  import system.dispatcher
 
   val app = MetadataApp(Settings.config)
 

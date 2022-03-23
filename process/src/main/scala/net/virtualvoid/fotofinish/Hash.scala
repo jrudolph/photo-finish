@@ -78,7 +78,7 @@ object HashAlgorithm {
   }
 }
 case class Hash(hashAlgorithm: HashAlgorithm, data: ByteString) {
-  lazy val asHexString: String = data.map(_ formatted "%02x").mkString
+  lazy val asHexString: String = data.map("%02x" format _).mkString
 
   override def hashCode(): Int = // build hashcode directly from first 4 bytes of hash data
     ((data(0) & 0xff) << 24) |
