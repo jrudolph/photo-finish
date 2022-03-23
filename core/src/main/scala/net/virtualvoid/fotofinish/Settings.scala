@@ -29,7 +29,6 @@ object Settings {
     IngestionData,
     FileTypeData,
     ExifBaseData,
-    Thumbnail,
     FaceData,
     HashData,
     FFProbeData,
@@ -52,9 +51,6 @@ object Settings {
         deleted(entry, s"By now unsupported hash algorithm ${alg.name}")
       case _ => entry
     }
-  def removeThumbnails(entry: MetadataEntry): MetadataEntry =
-    if (entry.kind == Thumbnail) deleted(entry, "Thumbnail metadata not supported any more")
-    else entry
 
   def deleted(original: MetadataEntry, reason: String): MetadataEntry =
     MetadataEntry(
@@ -79,7 +75,7 @@ object Settings {
       cacheDir,
       HashAlgorithm.Sha512T160,
       knownMetadataKinds,
-      (removeLongHashEntries _).andThen(removeThumbnails),
+      (removeLongHashEntries _),
       autoExtractors,
       fixedPoolSize,
       120.seconds,

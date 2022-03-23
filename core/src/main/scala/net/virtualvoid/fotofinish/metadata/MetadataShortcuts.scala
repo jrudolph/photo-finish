@@ -1,7 +1,6 @@
 package net.virtualvoid.fotofinish.metadata
 
 import akka.http.scaladsl.model.DateTime
-import akka.util.ByteString
 
 import scala.collection.immutable
 import scala.reflect.ClassTag
@@ -23,6 +22,5 @@ object MetadataShortcuts {
   val OriginalFileNames = manyFromManyEntries[IngestionData, String](_.originalFileName)
   val OriginalFolders = manyFromManyEntries[IngestionData, String](x => x.originalFilePath)
   val OriginalFullFilePaths = manyFromManyEntries[IngestionData, String](x => x.originalFullFilePath)
-  val Thumbnail = optional[Thumbnail, ByteString](t => Some(t.data))
   val Faces = manyFromSingle[FaceData, FaceInfo](_.faces)
 }

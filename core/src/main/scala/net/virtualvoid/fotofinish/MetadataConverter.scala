@@ -37,7 +37,6 @@ object MetadataConverter extends App {
     def kindAndCreator(kind: String, version: Int): (MetadataKind, Creator) = kind match {
       case "ingestion-data"                      => (IngestionData, Ingestion)
       case "exif-base-data"                      => (ExifBaseData, Creator.fromExtractor(ExifBaseDataExtractor.instance))
-      case "thumbnail"                           => (Thumbnail, Creator.fromExtractor(ThumbnailExtractor.instance))
       case "net.virtualvoid.fotofinish.FaceData" => (FaceData, Creator.fromExtractor(FaceDataExtractor.instance))
     }
     val (kind, creator) = kindAndCreator(entry.kind, entry.version)
