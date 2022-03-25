@@ -2,11 +2,8 @@ package net.virtualvoid.fotofinish
 
 import java.io.{ File, FileOutputStream }
 
-import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.{ SimpleEntry, SimpleJournalEntry, SimpleKind }
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.process.ProcessConfig
-import net.virtualvoid.fotofinish.util.JsonExtra
-import spray.json.JsonFormat
 
 import scala.concurrent.duration.FiniteDuration
 import scala.util.Try
@@ -23,7 +20,7 @@ final case class RepositoryConfig(
     executorParallelism: Int,
     snapshotInterval:    FiniteDuration,
     snapshotOffset:      Long // only create a new snapshot if this many events have been processed since (because replaying will likely be faster otherwise)
-) extends ProcessConfig {
+) extends ProcessConfig with EntryFormatsFromKinds {
   val primaryStorageDir: File = new File(storageDir, s"by-${hashAlgorithm.name}")
   val allMetadataFile: File = new File(metadataDir, "metadata.json.gz")
 
@@ -87,27 +84,5 @@ final case class RepositoryConfig(
       metadataCollectionFor(entry.kind)
     )
 
-  def resolve(kind: SimpleKind): MetadataKind =
-    knownMetadataKinds.find(k => k.kind == kind.kind && k.version == kind.version)
-      .getOrElse(throw new IllegalArgumentException(s"No MetadataKind found for [$kind] (has [${knownMetadataKinds.mkString(", ")}])"))
-  def resolve(entry: SimpleEntry): MetadataEntry = {
-    val kind = resolve(entry.kind)
-
-    MetadataEntry[kind.T](
-      entry.target,
-      entry.secondaryTargets,
-      kind,
-      entry.creation,
-      entry.value.convertTo[kind.T](kind.jsonFormat)
-    )
-  }
-  def resolve(simpleJournalEntry: SimpleJournalEntry): MetadataEnvelope =
-    MetadataEnvelope(simpleJournalEntry.seqNr, resolve(simpleJournalEntry.entry))
-
-  import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.simpleEntryFormat
-  implicit lazy val entryFormat: JsonFormat[MetadataEntry] =
-    JsonExtra.deriveFormatFrom[SimpleEntry](SimpleEntry(_), resolve(_))
-
-  implicit lazy val envelopeFormat: JsonFormat[MetadataEnvelope] =
-    MetadataEnvelope.envelopeFormat(entryFormat)
+  override protected def allKinds: Set[MetadataKind] = knownMetadataKinds
 }

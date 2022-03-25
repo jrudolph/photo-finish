@@ -37,6 +37,9 @@ trait MetadataApp {
 object MetadataApp {
   def apply(_config: RepositoryConfig)(implicit _system: ActorSystem): MetadataApp =
     new MetadataApp {
+      val processConfig = _config: ProcessConfig
+      import processConfig.entryFormat
+
       def system: ActorSystem = _system
       implicit def executionContext: ExecutionContext = system.dispatcher
       val extractionContext = system.dispatchers.lookup("extraction-dispatcher")
@@ -70,7 +73,6 @@ object MetadataApp {
           .to(executor)
           .run()
 
-      import _config.entryFormat
       val ingestor = runProcess(IngestionController.toProcessSqlite)
       val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite)
       val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e).toProcessSqlite))

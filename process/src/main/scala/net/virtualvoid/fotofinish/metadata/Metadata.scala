@@ -198,10 +198,47 @@ object MetadataJsonProtocol {
   }
   case class SimpleJournalEntry(seqNr: Long, entry: SimpleEntry)
 
-  import DefaultJsonProtocol._
   implicit def simpleKindFormat: JsonFormat[SimpleKind] = jsonFormat2(SimpleKind.apply)
   implicit def simpleEntryFormat: JsonFormat[SimpleEntry] = jsonFormat5(SimpleEntry.apply)
   implicit def simpleJournalEntryFormat: JsonFormat[SimpleJournalEntry] = jsonFormat2(SimpleJournalEntry.apply)
+
+  def entryFormat(resolveKind: (String, Int) => MetadataKind): JsonFormat[MetadataEntry] =
+    JsonExtra.deriveFormatFrom[SimpleEntry](SimpleEntry(_), resolveEntry(resolveKind))
+  def envelopeFormat(resolveKind: (String, Int) => MetadataKind): JsonFormat[MetadataEnvelope] =
+    MetadataEnvelope.envelopeFormat(entryFormat(resolveKind))
+
+  private def resolveEntry(resolveKind: (String, Int) => MetadataKind): SimpleEntry => MetadataEntry = { entry =>
+    val kind = resolveKind(entry.kind.kind, entry.kind.version)
+
+    MetadataEntry[kind.T](
+      entry.target,
+      entry.secondaryTargets,
+      kind,
+      entry.creation,
+      entry.value.convertTo[kind.T](kind.jsonFormat)
+    )
+  }
+}
+
+trait EntryFormats {
+  protected def resolveKind(kind: String, version: Int): MetadataKind
+
+  implicit def entryFormat: JsonFormat[MetadataEntry] =
+    MetadataJsonProtocol.entryFormat(resolveKind)
+  implicit def envelopeFormat: JsonFormat[MetadataEnvelope] =
+    MetadataJsonProtocol.envelopeFormat(resolveKind)
+}
+
+trait EntryFormatsFromKinds extends EntryFormats {
+  protected def allKinds: Set[MetadataKind]
+
+  private lazy val kindMap: Map[(String, Int), MetadataKind] =
+    allKinds.map(k => (k.kind, k.version) -> k).toMap
+
+  override def resolveKind(kind: String, version: Int): MetadataKind =
+    kindMap.getOrElse(
+      kind -> version,
+      throw new IllegalArgumentException(s"No MetadataKind found for [$kind] (has [${allKinds.mkString(", ")}])"))
 }
 
 final case class Metadata(entries: immutable.Seq[MetadataEntry]) {
