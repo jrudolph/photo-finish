@@ -52,6 +52,13 @@ object MetadataProcess {
     p:            MetadataProcess,
     config:       ProcessConfig,
     journal:      MetadataJournal,
+    extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] =
+    asSource(p, config, journal.source _, extractionEC)(system, ec)
+
+  def asSource(
+    p:            MetadataProcess,
+    config:       ProcessConfig,
+    entrySource:  Long => Source[StreamEntry, Any],
     extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
@@ -60,7 +67,7 @@ object MetadataProcess {
           case (queue, sink) =>
             p.api(new HandleWithStateFunc[p.S] {
               def apply[T](f: p.S => (p.S, Vector[WorkEntry], T)): Future[T] = {
-                val promise = Promise[T]
+                val promise = Promise[T]()
                 queue.offer(Execute(f, promise))
                   .onComplete {
                     case Success(QueueOfferResult.Enqueued) =>
@@ -244,7 +251,7 @@ object MetadataProcess {
             Source.empty
         })
 
-    Source.futureSource(snapshotFut.map(snapshot => journal.source(snapshot.currentSeqNr + 1)))
+    Source.futureSource(snapshotFut.map(snapshot => entrySource(snapshot.currentSeqNr + 1)))
       .map {
         case m @ Metadata(entry) =>
           if ((entry.seqNr % 100) == 0) println(s"[${p.id}] at [${entry.seqNr}]")
