@@ -27,7 +27,7 @@ object MetadataJournal {
    * A flow that produces existing entries and consumes new events to be written to the journal.
    * The flow can be reused.
    */
-  def apply(config: ProcessConfig)(implicit system: ActorSystem): MetadataJournal = {
+  def apply(config: JournalConfig)(implicit system: ActorSystem): MetadataJournal = {
     import system.dispatcher
     import config.envelopeFormat
 
@@ -186,7 +186,7 @@ object MetadataJournal {
     }
   }
 
-  private def writeJournalEntry(config: ProcessConfig, envelope: MetadataEnvelope): Unit = {
+  private def writeJournalEntry(config: JournalConfig, envelope: MetadataEnvelope): Unit = {
     if (envelope.seqNr % 1000 == 0) writeJournalIndex(config, envelope) // FIXME: make configurable
     val fos = new FileOutputStream(config.allMetadataFile, true)
     val out = new GZIPOutputStream(fos)
@@ -196,7 +196,7 @@ object MetadataJournal {
     out.close()
     fos.close()
   }
-  private def writeJournalIndex(config: ProcessConfig, envelope: MetadataEnvelope): Unit = {
+  private def writeJournalIndex(config: JournalConfig, envelope: MetadataEnvelope): Unit = {
     val curSize = config.allMetadataFile.length
     val fos = new FileOutputStream(config.metadataIndexFile, true)
     fos.write(f"${envelope.seqNr}%d $curSize%d\n".getBytes)
