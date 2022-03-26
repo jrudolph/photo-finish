@@ -5,7 +5,7 @@ val akkaHttpV = "10.2.9"
 val scalaTestV = "3.2.11"
 
 lazy val root: Project = project.in(file("."))
-  .aggregate(core, web, docs)
+  .aggregate(process, core, web, docs)
 
 val rootRef = ProjectRef(file("."), "root")
 
