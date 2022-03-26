@@ -33,7 +33,7 @@ trait MetadataProcess {
 
   def initialState: S
   def processEvent(state: S, event: MetadataEnvelope): S
-  def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry])
+  def createWork(state: S): (S, Vector[WorkEntry])
   def api(handleWithState: HandleWithStateFunc[S])(implicit ec: ExecutionContext): Api
 
   def saveSnapshot(target: File, config: ProcessConfig, snapshot: Snapshot[S]): S
@@ -49,17 +49,15 @@ object MetadataProcess {
   final case class Execute[S, T](f: S => (S, Vector[WorkEntry], T), promise: Promise[T]) extends StreamEntry
 
   def asSource(
-    p:            MetadataProcess,
-    config:       ProcessConfig,
-    journal:      MetadataJournal,
-    extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] =
-    asSource(p, config, journal.source _, extractionEC)(system, ec)
+    p:       MetadataProcess,
+    config:  ProcessConfig,
+    journal: MetadataJournal)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] =
+    asSource(p, config, journal.source _)(system, ec)
 
   def asSource(
-    p:            MetadataProcess,
-    config:       ProcessConfig,
-    entrySource:  Long => Source[StreamEntry, Any],
-    extractionEC: ExecutionContext)(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
+    p:           MetadataProcess,
+    config:      ProcessConfig,
+    entrySource: Long => Source[StreamEntry, Any])(implicit system: ActorSystem, ec: ExecutionContext): Source[WorkEntry, p.Api] = {
     val injectApi: Source[StreamEntry, p.Api] =
       Source.queue[StreamEntry](10000, OverflowStrategy.dropNew) // FIXME: will this be enough for mass injections?
         .mergeMat(MergeHub.source[StreamEntry])(Keep.both)
@@ -87,13 +85,6 @@ object MetadataProcess {
                   .to(sink)
             })
         }
-
-    val extractionContext = new ExtractionContext {
-      def executionContext: ExecutionContext = extractionEC
-      def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
-        // FIXME: easy for now as we expect all hashes to be available as files
-        f(config.repoFileFor(hash))
-    }
 
     type Handler = ProcessState => StreamEntry => ProcessState
     case class ProcessState(seqNr: Long, processState: p.S, handler: Handler, workEntries: Vector[WorkEntry], lastSnapshotAt: Long, hasFinishedReplaying: Boolean, finished: Boolean) {
@@ -125,7 +116,7 @@ object MetadataProcess {
         if (hasFinishedReplaying)
           if (workEntries.nonEmpty) (clearWorkEntries, workEntries)
           else {
-            val (newState, workEntries) = p.createWork(processState, extractionContext)
+            val (newState, workEntries) = p.createWork(processState)
             (withState(newState), workEntries)
           }
         else

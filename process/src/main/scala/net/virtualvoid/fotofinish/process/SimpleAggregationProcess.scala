@@ -13,7 +13,7 @@ class SimpleAggregationProcess[_S, T](override val id: String, val version: Int,
     if (event.entry.kind == kind) f(state, event.entry.cast(kind))
     else state
 
-  def createWork(state: _S, context: ExtractionContext): (_S, Vector[WorkEntry]) = (state, Vector.empty)
+  def createWork(state: _S): (_S, Vector[WorkEntry]) = (state, Vector.empty)
   def api(handleWithState: HandleWithStateFunc[_S])(implicit ec: ExecutionContext): () => Future[_S] =
     () => handleWithState.access(identity)
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[_S] = _stateFormat

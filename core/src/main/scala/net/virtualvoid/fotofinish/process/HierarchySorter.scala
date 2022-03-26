@@ -90,7 +90,7 @@ class HierarchySorter[T](hierarchy: Hierarchy[T]) extends SingleEntryState {
     if (event.entry.kind == hierarchy.metadataKind) state.handle(event.entry.target.hash, event.entry.value.asInstanceOf[hierarchy.M])
     else state
 
-  override def createWork(state: State, context: ExtractionContext): (State, Vector[WorkEntry]) = (state, Vector.empty)
+  override def createWork(state: State): (State, Vector[WorkEntry]) = (state, Vector.empty)
   override def api(handleWithState: HandleWithStateFunc[State])(implicit ec: ExecutionContext): HierarchyAccess[T] =
     new HierarchyAccess[T] {
       def root: Future[Node[T]] = byPrefix(Vector.empty).map(_.get)

@@ -103,7 +103,7 @@ trait PerKeyProcess { pkp =>
   def initialPerKeyState(key: Key): PerKeyState
   def processEvent(event: MetadataEnvelope): Effect
   def hasWork(key: Key, state: PerKeyState): Boolean = false
-  def createWork(key: Key, state: PerKeyState, context: ExtractionContext): (Effect, Vector[WorkEntry]) = (Effect.Empty, Vector.empty)
+  def createWork(key: Key, state: PerKeyState): (Effect, Vector[WorkEntry]) = (Effect.Empty, Vector.empty)
   def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): Api
 
   def initializeSnapshot: Effect = Effect.Empty
@@ -229,13 +229,13 @@ trait PerKeyProcess { pkp =>
         case Effect.Empty => state
       }
 
-      def createWork(state: S, context: ExtractionContext): (S, Vector[WorkEntry]) =
+      def createWork(state: S): (S, Vector[WorkEntry]) =
         state.withWork
           .take(10)
           .map(h => h -> state.get(h))
           .map {
             case (key, phs) =>
-              val (effect, work) = pkp.createWork(key, phs, context)
+              val (effect, work) = pkp.createWork(key, phs)
               (
                 (s: State) => interpretEffect(s, effect).removeFromWorkList(key),
                 work

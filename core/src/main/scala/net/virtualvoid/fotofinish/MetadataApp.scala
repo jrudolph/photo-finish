@@ -3,10 +3,11 @@ package net.virtualvoid.fotofinish
 import akka.actor.ActorSystem
 import akka.http.scaladsl.model.DateTime
 import akka.stream.scaladsl.{ MergeHub, Sink, Source }
-import net.virtualvoid.fotofinish.metadata.{ FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind }
+import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind }
 import net.virtualvoid.fotofinish.process._
 import spray.json.JsonFormat
 
+import java.io.File
 import scala.collection.immutable.TreeSet
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Success
@@ -42,7 +43,12 @@ object MetadataApp {
 
       def system: ActorSystem = _system
       implicit def executionContext: ExecutionContext = system.dispatcher
-      val extractionContext = system.dispatchers.lookup("extraction-dispatcher")
+      val extractionContext = new ExtractionContext {
+        val executionContext: ExecutionContext = system.dispatchers.lookup("extraction-dispatcher")
+        def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
+          // FIXME: easy for now as we expect all hashes to be available as files
+          f(config.repoFileFor(hash))
+      }
 
       def config: RepositoryConfig = _config
 
@@ -63,7 +69,7 @@ object MetadataApp {
           .run()
 
       def runProcess(process: MetadataProcess): process.Api =
-        MetadataProcess.asSource(process, _config, journal, extractionContext)
+        MetadataProcess.asSource(process, _config, journal)
           .recoverWithRetries(1, {
             case ex =>
               println(s"Process [${process.id}] failed with [$ex]")
@@ -75,7 +81,7 @@ object MetadataApp {
 
       val ingestor = runProcess(IngestionController.toProcessSqlite)
       val metadataAccess = runProcess(PerObjectMetadataCollector.toProcessSqlite)
-      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e).toProcessSqlite))
+      val metadataStatuses = config.autoExtractors.toSeq.map(e => e -> runProcess(new MetadataIsCurrentProcess(e, extractionContext).toProcessSqlite))
 
       def ingestionDataSink: Sink[(Hash, IngestionData), Any] = ingestor.ingestionDataSink
       def ingest(hash: Hash, data: IngestionData): Unit = ingestor.ingest(hash, data)

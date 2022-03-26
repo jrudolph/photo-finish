@@ -11,7 +11,7 @@ trait MetadataExtractionScheduler {
   def workHistogram: Future[Map[String, Int]]
 }
 
-class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdProcess {
+class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: ExtractionContext) extends PerIdProcess {
   type GlobalState = StateHistogram
   type PerKeyState = HashState
 
@@ -186,7 +186,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor) extends PerIdPr
     Effect.accessFlatMapGlobalState(_.handle(event.entry))
 
   override def hasWork(id: Id, state: HashState): Boolean = state.isInstanceOf[Ready]
-  override def createWork(key: Id, state: HashState, context: ExtractionContext): (Effect, Vector[WorkEntry]) =
+  override def createWork(key: Id, state: HashState): (Effect, Vector[WorkEntry]) =
     state match {
       case Ready(depValues) =>
         (
