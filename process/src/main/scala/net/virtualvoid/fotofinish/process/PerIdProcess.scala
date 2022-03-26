@@ -5,7 +5,7 @@ import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ Flow, Sink }
-import net.virtualvoid.fotofinish.metadata.{ DeletedMetadata, ExtractionContext, Id, MetadataEntry, MetadataEnvelope }
+import net.virtualvoid.fotofinish.metadata.{ DeletedMetadata, Id, MetadataEntry, MetadataEnvelope }
 import spray.json.{ JsNull, JsValue, JsonFormat }
 
 import scala.concurrent.{ ExecutionContext, Future }
