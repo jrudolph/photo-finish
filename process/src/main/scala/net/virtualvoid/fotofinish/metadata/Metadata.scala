@@ -45,7 +45,7 @@ object Creator {
   implicit val creatorFormat: JsonFormat[Creator] = new JsonFormat[Creator] {
     override def read(json: JsValue): Creator = json.asJsObject.field("type") match {
       case JsString("Ingestion") => Ingestion
-      case JsString("Deleted")   => Ingestion
+      case JsString("Deleted")   => Deleted
       case JsString("Extractor") => json.convertTo[Extractor]
       case JsString("User")      => json.convertTo[User]
       case x                     => MetadataJsonProtocol.error(s"Cannot read Creator from $x")
