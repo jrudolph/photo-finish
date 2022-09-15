@@ -27,7 +27,7 @@ object MetadataKind {
   }
 }
 sealed trait Creator
-// final case class CreatedByUser(userName: String) extends Creator
+final case class User(userId: String) extends Creator
 // final case class Imported()
 case object Ingestion extends Creator
 case class Extractor(
@@ -41,17 +41,20 @@ object Creator {
   import DefaultJsonProtocol._
   import util.JsonExtra._
   implicit val extractorFormat: JsonFormat[Extractor] = jsonFormat2(Extractor.apply _)
+  implicit val createdByUser: JsonFormat[User] = jsonFormat1(User.apply _)
   implicit val creatorFormat: JsonFormat[Creator] = new JsonFormat[Creator] {
     override def read(json: JsValue): Creator = json.asJsObject.field("type") match {
       case JsString("Ingestion") => Ingestion
       case JsString("Deleted")   => Ingestion
       case JsString("Extractor") => json.convertTo[Extractor]
+      case JsString("User")      => json.convertTo[User]
       case x                     => MetadataJsonProtocol.error(s"Cannot read Creator from $x")
     }
     override def write(obj: Creator): JsValue = obj match {
       case Ingestion    => JsObject("type" -> JsString("Ingestion"))
       case Deleted      => JsObject("type" -> JsString("Deleted"))
       case e: Extractor => e.toJson + ("type" -> JsString("Extractor"))
+      case u: User      => u.toJson + ("type" -> JsString("User"))
     }
   }
   def fromExtractor(extractor: MetadataExtractor): Creator = Extractor(extractor.kind, extractor.version)
