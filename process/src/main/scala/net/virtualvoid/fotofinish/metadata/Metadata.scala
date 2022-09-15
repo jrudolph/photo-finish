@@ -92,8 +92,13 @@ object Id {
       def stringRepr: String = repr
     }
 
-  def fromString(idStr: String): Id =
-    Hashed(Hash.fromPrefixedString(idStr).getOrElse(MetadataJsonProtocol.error(s"Cannot read Id from '$idStr'")))
+  def fromString(idStr: String): Id = {
+    val Array(kind, value) = idStr.split(':')
+    if (HashAlgorithm.byName(kind).isDefined)
+      Hashed(Hash.fromPrefixedString(idStr).getOrElse(MetadataJsonProtocol.error(s"Cannot read Id from '$idStr'")))
+    else
+      generic(kind, value)
+  }
 
   import DefaultJsonProtocol._
   implicit def hashedFormat: JsonFormat[Hashed] = jsonFormat1(Hashed.apply _)
