@@ -20,6 +20,8 @@ trait MetadataJournal {
   def newEntrySink: Sink[MetadataEntry, Any]
   def source(fromSeqNr: Long): Source[StreamEntry, Any]
   def shutdown(): Unit
+
+  def emit(entry: MetadataEntry): Unit
 }
 
 object MetadataJournal {
@@ -173,6 +175,9 @@ object MetadataJournal {
             case x => x
           }
       override def shutdown(): Unit = killSwitch.shutdown()
+
+      override def emit(entry: MetadataEntry): Unit =
+        Source.single(entry).runWith(newEntrySink)
     }
   }
 
