@@ -1,6 +1,5 @@
 package net.virtualvoid.fotofinish.process
 
-import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, Extractor, Id, MetadataEntry, MetadataEnvelope, MetadataExtractor }
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json.JsonFormat
@@ -101,11 +100,11 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: Extrac
             case MetadataExtractor.Keep => Calculated(ExtractorVersion, deps)
             //case MetadataExtractor.PublishUpgraded(newEntry) => ??? // FIXME: create new state that can create a simple workitem to publish new entry
             case MetadataExtractor.RerunExtractor =>
-              handleReady(entry.target.hash, deps, Some(entry))
+              handleReady(entry.target, deps, Some(entry))
           }
       }
-    def handleReady(hash: Hash, deps: Vector[MetadataEntry], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]): HashState =
-      extractor.precondition(hash, deps) match {
+    def handleReady(id: Id, deps: Vector[MetadataEntry], upgradeExisting: Option[MetadataEntry.Aux[extractor.EntryT]]): HashState =
+      extractor.precondition(id, deps) match {
         case None        => Ready(deps)
         case Some(cause) => PreConditionNotMet(cause, deps, upgradeExisting)
       }
@@ -122,7 +121,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: Extrac
         val deps = newL.map(_.get)
         upgradeExisting match {
           case Some(existing) => handleUpgrade(existing, deps)
-          case None           => handleReady(entry.target.hash, deps, None)
+          case None           => handleReady(entry.target, deps, None)
         }
       } else CollectingDependencies(newL, upgradeExisting)
     }
@@ -137,7 +136,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: Extrac
         if (existing.kind.kind == entry.kind.kind && existing.creation.created < entry.creation.created) entry
         else existing
       }
-      handleReady(entry.target.hash, newDeps, None)
+      handleReady(entry.target, newDeps, None)
     }
 
     override def dependencyState: Vector[DependencyState] = dependencies.map(Existing)
@@ -168,7 +167,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: Extrac
       if (newDeps != dependencies)
         upgradeExisting match { // FIXME: DRY with CollectingDependencies
           case Some(existing) => handleUpgrade(existing, newDeps)
-          case None           => handleReady(entry.target.hash, newDeps, None)
+          case None           => handleReady(entry.target, newDeps, None)
         }
       else
         this
@@ -191,7 +190,7 @@ class MetadataIsCurrentProcess(val extractor: MetadataExtractor, context: Extrac
       case Ready(depValues) =>
         (
           Effect.accessFlatMapGlobalState(_.schedule(key)),
-          Vector(WorkEntry.opaque(() => extractor.extract(key.hash, depValues, context).map(Vector(_))(context.executionContext)))
+          Vector(WorkEntry.opaque(() => extractor.extract(key, depValues, context).map(Vector(_))(context.executionContext)))
         )
       case _ => (Effect.Empty, Vector.empty)
     }

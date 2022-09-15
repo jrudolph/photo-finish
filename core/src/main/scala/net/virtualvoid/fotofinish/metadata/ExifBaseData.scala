@@ -5,7 +5,6 @@ import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.Directory
 import com.drew.metadata.exif.{ ExifDirectoryBase, ExifIFD0Directory, ExifSubIFDDirectory }
 import com.drew.metadata.jpeg.JpegDirectory
-import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
 import spray.json.{ DefaultJsonProtocol, JsString, JsValue, JsonFormat }
 
@@ -58,14 +57,14 @@ object ExifBaseDataExtractor {
       override def metadataKind: Aux[EntryT] = ExifBaseData
 
       override def dependsOn: Vector[MetadataKind] = Vector(FileTypeData)
-      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = {
+      override def precondition(id: Id, dependencies: Vector[MetadataEntry]): Option[String] = {
         val mimeType = dependencies.head.asInstanceOf[MetadataEntry.Aux[FileTypeData]].value.mimeType
         if (ImageDataExtractor.DefaultImageMimeTypeFilter(mimeType)) None
         else Some(s"Object is not an image but [$mimeType]")
       }
 
-      override protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[ExifBaseData] =
-        ctx.accessDataSync(hash) { imageFile =>
+      override protected def extractEntry(id: Id, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[ExifBaseData] =
+        ctx.accessDataSync(id) { imageFile =>
           val metadata = ImageMetadataReader.readMetadata(imageFile)
           val dir0 = Option(metadata.getFirstDirectoryOfType(classOf[ExifIFD0Directory]))
           val dir1 = Option(metadata.getFirstDirectoryOfType(classOf[ExifSubIFDDirectory]))

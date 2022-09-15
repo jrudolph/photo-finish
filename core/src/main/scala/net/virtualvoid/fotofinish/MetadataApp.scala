@@ -45,9 +45,9 @@ object MetadataApp {
       implicit def executionContext: ExecutionContext = system.dispatcher
       val extractionContext = new ExtractionContext {
         val executionContext: ExecutionContext = system.dispatchers.lookup("extraction-dispatcher")
-        def accessData[T](hash: Hash)(f: File => Future[T]): Future[T] =
+        def accessData[T](id: Id)(f: File => Future[T]): Future[T] =
           // FIXME: easy for now as we expect all hashes to be available as files
-          f(config.repoFileFor(hash))
+          f(config.repoFileFor(id.hash))
       }
 
       def config: RepositoryConfig = _config

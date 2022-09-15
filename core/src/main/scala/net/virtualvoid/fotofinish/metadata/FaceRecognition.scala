@@ -84,8 +84,8 @@ object FaceDataExtractor {
       def metadataKind: Aux[FaceData] = FaceData
       def dependsOn: Vector[MetadataKind] = Vector(FileTypeData, ExifBaseData)
 
-      def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FaceData] =
-        ctx.accessDataSync(hash) { file =>
+      def extractEntry(id: Id, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FaceData] =
+        ctx.accessDataSync(id) { file =>
           val tmpFile = File.createTempFile("rotated", "jpeg")
           try {
             val exifBaseData = dependencies(1).value.asInstanceOf[ExifBaseData]
@@ -134,10 +134,10 @@ object FaceDataExtractor {
 
           } catch {
             case NonFatal(ex) =>
-              throw new RuntimeException(s"FaceRecognition failed for hash [${hash.asHexString}] because of ${ex.getClass} ${ex.getMessage}", ex)
+              throw new RuntimeException(s"FaceRecognition failed for hash [${id.hash.asHexString}] because of ${ex.getClass} ${ex.getMessage}", ex)
           } finally tmpFile.delete()
         }
-      override def precondition(hash: Hash, dependencies: Vector[MetadataEntry]): Option[String] = {
+      override def precondition(id: Id, dependencies: Vector[MetadataEntry]): Option[String] = {
         val mime = dependencies(0).value.asInstanceOf[FileTypeData].mimeType
         val exif = dependencies(1).value.asInstanceOf[ExifBaseData]
         if (mime.startsWith("image/"))

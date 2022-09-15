@@ -1,7 +1,6 @@
 package net.virtualvoid.fotofinish.metadata
 import java.io.File
 
-import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata.MetadataKind.Aux
 import spray.json.JsonFormat
 
@@ -27,8 +26,8 @@ object FileTypeDataExtractor {
       def metadataKind: Aux[FileTypeData] = FileTypeData
       def dependsOn: Vector[MetadataKind] = Vector(IngestionData)
 
-      protected def extractEntry(hash: Hash, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FileTypeData] =
-        ctx.accessDataSync(hash) { f =>
+      protected def extractEntry(id: Id, dependencies: Vector[MetadataEntry], ctx: ExtractionContext): Future[FileTypeData] =
+        ctx.accessDataSync(id) { f =>
           val ingestionData = dependencies(0).cast(IngestionData).value
           import sys.process._
           val ext = ingestionData.originalFileName.drop(ingestionData.originalFileName.lastIndexOf('.') + 1)
@@ -63,11 +62,11 @@ object FileTypeDataExtractor {
 object ImageDataExtractor {
   def DefaultImageMimeTypeFilter: String => Boolean = _.startsWith("image/")
 
-  def apply(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Hash, File, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
-    MetadataExtractor.cond1(_kind, _version, metadata, FileTypeData)(fileTypeData => if (mimeTypeFilter(fileTypeData.mimeType)) None else Some(s"Object is not an image but [${fileTypeData.mimeType}]")) { (hash, ctx) =>
-      ctx.accessData(hash) { file => f(hash, file, ctx) }
+  def apply(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Id, File, ExtractionContext) => Future[metadata.T]): MetadataExtractor =
+    MetadataExtractor.cond1(_kind, _version, metadata, FileTypeData)(fileTypeData => if (mimeTypeFilter(fileTypeData.mimeType)) None else Some(s"Object is not an image but [${fileTypeData.mimeType}]")) { (id, ctx) =>
+      ctx.accessData(id) { file => f(id, file, ctx) }
     }
-  def sync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Hash, File, ExtractionContext) => metadata.T): MetadataExtractor =
+  def sync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: (Id, File, ExtractionContext) => metadata.T): MetadataExtractor =
     apply(_kind, _version, metadata, mimeTypeFilter)((hash, imageFile, ctx) => Future(f(hash, imageFile, ctx))(ctx.executionContext))
 
   def fromFileSync(_kind: String, _version: Int, metadata: MetadataKind, mimeTypeFilter: String => Boolean = DefaultImageMimeTypeFilter)(f: File => metadata.T): MetadataExtractor =
