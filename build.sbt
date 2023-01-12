@@ -1,8 +1,8 @@
-val scalaV = "2.13.8"
-val akkaV = "2.6.19"
-val akkaHttpV = "10.2.9"
+val scalaV = "2.13.10"
+val akkaV = "2.6.20"
+val akkaHttpV = "10.2.10"
 
-val scalaTestV = "3.2.11"
+val scalaTestV = "3.2.15"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(process, core, web, docs)
@@ -14,7 +14,7 @@ lazy val process: Project = project
   .settings(
     libraryDependencies ++= Seq(
       "io.spray" %% "spray-json" % "1.3.6",
-      "org.xerial" % "sqlite-jdbc" % "3.30.1",
+      "org.xerial" % "sqlite-jdbc" % "3.40.0.0",
 
       "com.typesafe.akka" %% "akka-actor" % akkaV,
       "com.typesafe.akka" %% "akka-stream" % akkaV,
@@ -27,8 +27,8 @@ lazy val core: Project = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "com.drewnoakes" % "metadata-extractor" % "2.16.0",
-      "net.java.dev.jna" % "jna" % "5.10.0",
+      "com.drewnoakes" % "metadata-extractor" % "2.18.0",
+      "net.java.dev.jna" % "jna" % "5.12.1",
     ),
 
     run / javaOptions += s"-Djna.library.path=${(rootRef / baseDirectory).value.getAbsolutePath}",
