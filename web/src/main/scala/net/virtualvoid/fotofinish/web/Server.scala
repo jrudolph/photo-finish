@@ -254,6 +254,7 @@ private[web] class ServerRoutes(app: MetadataApp) {
     import MetadataShortcuts._
     Seq(
       "Hash" -> Html(fileInfo.hash.asHexString),
+      "File Size" -> Html(ingestion.head.fileSize.toString)
     ) ++
       fromOptional("Mime Type", MimeType)(d => Html(d)) ++
       fromOptional("Width", Width)(d => Html(d.toString)) ++
