@@ -7,7 +7,7 @@ import java.util.Date
 
 import scala.collection.immutable
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 
 import metadata._
 

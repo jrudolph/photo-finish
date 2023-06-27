@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish
 
 import java.io.File
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 import com.typesafe.config.ConfigFactory
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.MetadataJsonProtocol.SimpleKind

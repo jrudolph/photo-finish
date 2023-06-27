@@ -4,9 +4,9 @@ import java.io.{ File, FileOutputStream }
 import java.nio.file.{ Files, StandardCopyOption }
 import java.util.zip.GZIPOutputStream
 
-import akka.actor.ActorSystem
-import akka.stream.scaladsl.{ Compression, FileIO, Framing, Sink }
-import akka.util.ByteString
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.{ Compression, FileIO, Framing, Sink }
+import org.apache.pekko.util.ByteString
 import net.virtualvoid.fotofinish.metadata.MetadataEntry
 import spray.json.JsonFormat
 

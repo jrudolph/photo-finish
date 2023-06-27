@@ -2,8 +2,8 @@ package net.virtualvoid.fotofinish.apps
 
 import java.io.File
 
-import akka.actor.ActorSystem
-import akka.stream.scaladsl.Sink
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.Sink
 import net.virtualvoid.fotofinish.process.MetadataJournal
 import net.virtualvoid.fotofinish.process.MetadataProcess.Metadata
 import net.virtualvoid.fotofinish.Settings

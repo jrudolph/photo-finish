@@ -3,8 +3,8 @@ package metadata
 
 import java.util.Base64
 
-import akka.http.scaladsl.model.DateTime
-import akka.util.ByteString
+import org.apache.pekko.http.scaladsl.model.DateTime
+import org.apache.pekko.util.ByteString
 import net.virtualvoid.fotofinish.util.JsonExtra
 import spray.json._
 

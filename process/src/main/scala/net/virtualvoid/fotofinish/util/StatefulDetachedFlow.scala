@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish.util
 
-import akka.stream.scaladsl.Flow
-import akka.stream.{ Attributes, FlowShape, Inlet, Outlet }
-import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
+import org.apache.pekko.stream.scaladsl.Flow
+import org.apache.pekko.stream.{ Attributes, FlowShape, Inlet, Outlet }
+import org.apache.pekko.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 
 class StatefulDetachedFlow[T, U, S](initialState: () => S, handle: (S, T) => S, emitF: S => (S, Vector[U]), isFinished: S => Boolean) extends GraphStage[FlowShape[T, U]] {
   val in = Inlet[T]("StateFullDetachedFlow.in")

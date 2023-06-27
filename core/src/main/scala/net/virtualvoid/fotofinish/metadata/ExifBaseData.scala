@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish.metadata
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.Directory
 import com.drew.metadata.exif.{ ExifDirectoryBase, ExifIFD0Directory, ExifSubIFDDirectory }

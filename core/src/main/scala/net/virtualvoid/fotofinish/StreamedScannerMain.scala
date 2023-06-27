@@ -2,8 +2,8 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import akka.actor.ActorSystem
-import akka.stream.scaladsl.Source
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.Source
 
 object StreamedScannerMain extends App {
   implicit val system = ActorSystem()

@@ -2,10 +2,10 @@ package net.virtualvoid.fotofinish
 
 import java.io.File
 
-import akka.actor.ActorSystem
-import akka.http.scaladsl.model.DateTime
-import akka.stream.scaladsl.{ Compression, FileIO, Framing }
-import akka.util.ByteString
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.http.scaladsl.model.DateTime
+import org.apache.pekko.stream.scaladsl.{ Compression, FileIO, Framing }
+import org.apache.pekko.util.ByteString
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata._
 import spray.json.JsValue

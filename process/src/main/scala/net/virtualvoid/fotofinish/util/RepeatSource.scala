@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish.util
 
-import akka.stream.{ Attributes, Outlet, SourceShape }
-import akka.stream.scaladsl.Source
-import akka.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
+import org.apache.pekko.stream.{ Attributes, Outlet, SourceShape }
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.stage.{ GraphStage, GraphStageLogic, InHandler, OutHandler }
 
 /**
  * A source that infinitely repeats the given source (by rematerializing it when the previous

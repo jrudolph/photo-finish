@@ -3,8 +3,8 @@ package net.virtualvoid.fotofinish.process
 import java.io.File
 import java.sql.{ Connection, DriverManager, PreparedStatement, ResultSet }
 
-import akka.actor.ActorSystem
-import akka.stream.scaladsl.{ Flow, Sink }
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.{ Flow, Sink }
 import net.virtualvoid.fotofinish.metadata.{ DeletedMetadata, Id, MetadataEntry, MetadataEnvelope }
 import spray.json.{ JsNull, JsValue, JsonFormat }
 

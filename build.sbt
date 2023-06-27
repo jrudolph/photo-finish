@@ -1,6 +1,6 @@
 val scalaV = "2.13.10"
-val akkaV = "2.6.20"
-val akkaHttpV = "10.2.10"
+val pekkoV = "1.0.0-RC2"
+val pekkoHttpV = "0.0.0+4448-10af46dc-SNAPSHOT"
 
 val scalaTestV = "3.2.15"
 
@@ -16,9 +16,9 @@ lazy val process: Project = project
       "io.spray" %% "spray-json" % "1.3.6",
       "org.xerial" % "sqlite-jdbc" % "3.40.0.0",
 
-      "com.typesafe.akka" %% "akka-actor" % akkaV,
-      "com.typesafe.akka" %% "akka-stream" % akkaV,
-      "com.typesafe.akka" %% "akka-http" % akkaHttpV, // for DateTime
+      "org.apache.pekko" %% "pekko-actor" % pekkoV,
+      "org.apache.pekko" %% "pekko-stream" % pekkoV,
+      "org.apache.pekko" %% "pekko-http" % pekkoHttpV, // for DateTime
     ),
   )
 
@@ -39,8 +39,8 @@ lazy val web = project
   .settings(basicSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "com.typesafe.akka" %% "akka-stream" % akkaV,
-      "com.typesafe.akka" %% "akka-http" % akkaHttpV,
+      "org.apache.pekko" %% "pekko-stream" % pekkoV,
+      "org.apache.pekko" %% "pekko-http" % pekkoHttpV,
     ),
 
     // Fix broken watchSources support in play/twirl, https://github.com/playframework/twirl/issues/186
@@ -108,4 +108,7 @@ lazy val basicSettings = Seq(
     "-XX:+DebugNonSafepoints",
   ),
   reStart / baseDirectory := (rootRef / baseDirectory).value,
+
+  resolvers += "Apache Nexus Snapshots" at "https://repository.apache.org/content/repositories/snapshots/",
+  resolvers += "Apache Nexus Staging" at "https://repository.apache.org/content/repositories/staging/",
 )

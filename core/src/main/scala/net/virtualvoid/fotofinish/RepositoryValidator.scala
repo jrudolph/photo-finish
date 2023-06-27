@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish
 
-import akka.Done
-import akka.actor.ActorSystem
-import akka.stream.scaladsl.Source
+import org.apache.pekko.Done
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream.scaladsl.Source
 
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.{ Await, Future }

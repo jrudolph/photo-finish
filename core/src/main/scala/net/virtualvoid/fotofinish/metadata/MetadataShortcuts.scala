@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish.metadata
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 
 import scala.collection.immutable
 import scala.reflect.ClassTag

@@ -3,7 +3,7 @@ package net.virtualvoid.fotofinish.metadata
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 import net.virtualvoid.fotofinish.FileInfo
 import spray.json.{ DefaultJsonProtocol, JsonFormat }
 

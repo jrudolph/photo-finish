@@ -3,14 +3,14 @@ package web
 
 import java.io.File
 
-import akka.Done
-import akka.actor.ActorSystem
-import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.{ ContentType, DateTime, HttpEntity, MediaTypes, StatusCodes, Uri }
-import akka.http.scaladsl.server.{ Directive0, ExceptionHandler, PathMatcher, PathMatcher1, Route }
-import akka.stream.IOResult
-import akka.stream.scaladsl.{ FileIO, Flow, Keep }
-import akka.util.ByteString
+import org.apache.pekko.Done
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.http.scaladsl.Http
+import org.apache.pekko.http.scaladsl.model.{ ContentType, DateTime, HttpEntity, MediaTypes, StatusCodes, Uri }
+import org.apache.pekko.http.scaladsl.server.{ Directive0, ExceptionHandler, PathMatcher, PathMatcher1, Route }
+import org.apache.pekko.stream.IOResult
+import org.apache.pekko.stream.scaladsl.{ FileIO, Flow, Keep }
+import org.apache.pekko.util.ByteString
 import play.twirl.api.Html
 import util.ImageTools
 import util.DateTimeExtra._
@@ -45,7 +45,7 @@ object ServerRoutes {
 private[web] class ServerRoutes(app: MetadataApp) {
   import app.executionContext
   import TwirlSupport._
-  import akka.http.scaladsl.server.Directives._
+  import org.apache.pekko.http.scaladsl.server.Directives._
 
   lazy val main: Route =
     handleExceptions(exceptionHandler) {

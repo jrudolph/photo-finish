@@ -1,7 +1,7 @@
 package net.virtualvoid.fotofinish.process
 
-import akka.http.scaladsl.model.DateTime
-import akka.stream.scaladsl.{ Flow, Sink }
+import org.apache.pekko.http.scaladsl.model.DateTime
+import org.apache.pekko.stream.scaladsl.{ Flow, Sink }
 import net.virtualvoid.fotofinish.Hash
 import net.virtualvoid.fotofinish.metadata.Id.Hashed
 import net.virtualvoid.fotofinish.metadata.{ CreationInfo, Id, Ingestion, IngestionData, MetadataEntry, MetadataEnvelope }

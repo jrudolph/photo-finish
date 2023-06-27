@@ -2,7 +2,7 @@ package net.virtualvoid.fotofinish.metadata
 
 import java.io.File
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Try

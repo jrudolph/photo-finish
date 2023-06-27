@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish.util
 
-import akka.http.scaladsl.model.DateTime
+import org.apache.pekko.http.scaladsl.model.DateTime
 
 object DateTimeExtra {
   implicit class RichDateTime(dateTime: DateTime) {

@@ -4,7 +4,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 
-import akka.util.ByteString
+import org.apache.pekko.util.ByteString
 import net.virtualvoid.fotofinish.Hash.chars
 import net.virtualvoid.fotofinish.util.DeduplicationCache
 

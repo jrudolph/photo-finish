@@ -4,7 +4,7 @@ import java.awt.geom.AffineTransform
 import java.awt.image.{ AffineTransformOp, BufferedImage, RenderedImage }
 import java.io.{ ByteArrayOutputStream, File, FileOutputStream }
 
-import akka.util.ByteString
+import org.apache.pekko.util.ByteString
 import javax.imageio.ImageIO
 import net.virtualvoid.fotofinish.metadata.{ Orientation, Rectangle }
 

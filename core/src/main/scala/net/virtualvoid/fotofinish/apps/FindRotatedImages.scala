@@ -1,6 +1,6 @@
 package net.virtualvoid.fotofinish.apps
 
-import akka.actor.ActorSystem
+import org.apache.pekko.actor.ActorSystem
 import net.virtualvoid.fotofinish.metadata.{ ExifBaseData, Orientation }
 import net.virtualvoid.fotofinish.{ MetadataApp, Settings }
 

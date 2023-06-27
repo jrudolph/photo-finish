@@ -1,8 +1,8 @@
 package net.virtualvoid.fotofinish
 
-import akka.actor.ActorSystem
-import akka.http.scaladsl.model.DateTime
-import akka.stream.scaladsl.{ MergeHub, Sink, Source }
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.http.scaladsl.model.DateTime
+import org.apache.pekko.stream.scaladsl.{ MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.metadata.{ ExtractionContext, FaceData, Id, IngestionData, Metadata, MetadataEntry, MetadataKind }
 import net.virtualvoid.fotofinish.process._
 import spray.json.JsonFormat

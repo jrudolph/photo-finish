@@ -3,9 +3,9 @@ package process
 
 import java.io.File
 
-import akka.actor.ActorSystem
-import akka.stream._
-import akka.stream.scaladsl.{ Flow, Keep, MergeHub, Sink, Source }
+import org.apache.pekko.actor.ActorSystem
+import org.apache.pekko.stream._
+import org.apache.pekko.stream.scaladsl.{ Flow, Keep, MergeHub, Sink, Source }
 import net.virtualvoid.fotofinish.metadata._
 import net.virtualvoid.fotofinish.util.StatefulDetachedFlow
 
