@@ -8,7 +8,7 @@ import org.apache.pekko.stream.scaladsl.Source
 object StreamedScannerMain extends App {
   implicit val system = ActorSystem()
 
-  val app = MetadataApp(Settings.config)
+  val app = MetadataApp(Settings.config.copy(autoExtractors = Set.empty)) // disable extraction when ingesting
 
   val dir = new File("/home/johannes/Fotos/Kameras/")
   println(s"Ingesting new files from $dir")
