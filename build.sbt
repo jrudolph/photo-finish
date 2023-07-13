@@ -1,5 +1,5 @@
 val scalaV = "2.13.10"
-val pekkoV = "1.0.0-RC2"
+val pekkoV = "1.0.0"
 val pekkoHttpV = "0.0.0+4448-10af46dc-SNAPSHOT"
 
 val scalaTestV = "3.2.15"
