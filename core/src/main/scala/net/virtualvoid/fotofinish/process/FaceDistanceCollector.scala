@@ -24,37 +24,18 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   ) {
     def handle(hash: Hash, data: FaceData): (Global, Effect) = {
       def faceId(idx: Int, faceInfo: FaceInfo): FaceId = faceIdCache(FaceId(hash, idx)) //, faceInfo.rectangle)
-      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData), Vector.empty)
+      def face(idx: Int, faceInfo: FaceInfo): PerFace = PerFace(faceId(idx, faceInfo), FaceUtils.createVector(faceInfo.modelData) /*, Vector.empty*/ )
       val allFaces = data.faces.zipWithIndex.map { case (info, idx) => face(idx, info) }
 
       val newVectors = vectors ++ allFaces.map(f => (f.vector, f.faceId))
-
-      def injectFace(p: PerFace): Effect = {
-        val neighbors =
-          vectors
-            .map(e => Neighbor(e._2.hash, e._2.idx, FaceUtils.sqdist(e._1, p.vector, effectiveThreshold)))
-            .filter(_.dist < effectiveThreshold)
-            .filter(n => n.idx != p.faceId.idx || n.hash != p.faceId.hash)
-
-        val newFace = p.copy(neighbors = neighbors)
-        def forNeighbor(n: Neighbor): Effect =
-          Effect.mapKeyState(n.faceId)(_.addNeighbor(Neighbor(p.faceId.hash, p.faceId.idx, n.dist)))
-
-        Effect
-          .setKeyState(p.faceId, newFace)
-          .and(neighbors.map(forNeighbor))
-      }
-
-      val effects = allFaces.map(injectFace)
-
-      copy(vectors = newVectors) -> Effect.and(effects)
+      val insertFaces = allFaces.map(p => Effect.setKeyState(p.faceId, p))
+      copy(vectors = newVectors) -> Effect.and(insertFaces)
     }
   }
 
   case class FaceId(
       hash: Hash,
       idx:  Int
-  //rectangle: Rectangle
   )
   case class Neighbor(
       hash: Hash,
@@ -65,18 +46,13 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
     def hasTarget(f: FaceId): Boolean = f.idx == idx && f.hash == hash
   }
   case class PerFace(
-      faceId:    FaceId,
-      vector:    FaceUtils.FeatureVector,
-      neighbors: Vector[Neighbor]
-  ) {
-    def addNeighbor(n: Neighbor): PerFace =
-      if (!n.hasTarget(faceId)) copy(neighbors = neighbors :+ n)
-      else this
-  }
+      faceId: FaceId,
+      vector: FaceUtils.FeatureVector
+  )
 
   def version: Int = 6
   def initialGlobalState: Global = Global(Vector.empty)
-  def initialPerKeyState(key: FaceId): PerFace = PerFace(key, Array.empty, Vector.empty)
+  def initialPerKeyState(key: FaceId): PerFace = PerFace(key, Array.empty)
   def processEvent(event: MetadataEnvelope): Effect =
     event.entry.kind match {
       case FaceData => Effect.flatMapGlobalState(_.handle(event.entry.target.hash, event.entry.value.asInstanceOf[FaceData]))
@@ -86,14 +62,21 @@ class PerFaceDistanceCollector(threshold: Float) extends PerKeyProcess {
   def api(handleWithState: AccessStateFunc)(implicit ec: ExecutionContext): SimilarFaces =
     new SimilarFaces {
       def similarFacesTo(hash: Hash, idx: Int): Future[Vector[(Hash, Int, Float)]] =
-        handleWithState.access(faceIdCache(FaceId(hash, idx)))(_.neighbors.map { case Neighbor(hash, idx, dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) })
+        handleWithState.accessGlobal { g =>
+          handleWithState.access(faceIdCache(FaceId(hash, idx))) { thisFace =>
+            g.vectors
+              .map(e => Neighbor(e._2.hash, e._2.idx, FaceUtils.sqdist(e._1, thisFace.vector, effectiveThreshold)))
+              .filter(_.dist < effectiveThreshold)
+              .map { case Neighbor(hash, idx, dist) => (hash, idx, dist.toFloat / FaceUtils.Factor / FaceUtils.Factor) }
+          }
+        }.flatten
     }
   import spray.json._
   import DefaultJsonProtocol._
   implicit val faceIdFormat: JsonFormat[FaceId] = DeduplicationCache.cachedFormat(jsonFormat2(FaceId), faceIdCache)
   def stateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[PerFace] = {
     implicit val neighborFormat = jsonFormat3(Neighbor)
-    jsonFormat3(PerFace)
+    jsonFormat2(PerFace)
   }
   def globalStateFormat(implicit entryFormat: JsonFormat[MetadataEntry]): JsonFormat[Global] =
     jsonFormat1(Global.apply _)
