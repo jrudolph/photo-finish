@@ -1,8 +1,8 @@
-val scalaV = "2.13.10"
+val scalaV = "2.13.12"
 val pekkoV = "1.0.1"
 val pekkoHttpV = "1.0.0"
 
-val scalaTestV = "3.2.15"
+val scalaTestV = "3.2.17"
 
 lazy val root: Project = project.in(file("."))
   .aggregate(process, core, web, docs)
@@ -14,7 +14,7 @@ lazy val process: Project = project
   .settings(
     libraryDependencies ++= Seq(
       "io.spray" %% "spray-json" % "1.3.6",
-      "org.xerial" % "sqlite-jdbc" % "3.40.0.0",
+      "org.xerial" % "sqlite-jdbc" % "3.43.0.0",
 
       "org.apache.pekko" %% "pekko-actor" % pekkoV,
       "org.apache.pekko" %% "pekko-stream" % pekkoV,
@@ -28,7 +28,7 @@ lazy val core: Project = project
   .settings(
     libraryDependencies ++= Seq(
       "com.drewnoakes" % "metadata-extractor" % "2.18.0",
-      "net.java.dev.jna" % "jna" % "5.12.1",
+      "net.java.dev.jna" % "jna" % "5.13.0",
     ),
 
     run / javaOptions += s"-Djna.library.path=${(rootRef / baseDirectory).value.getAbsolutePath}",
